@@ -6,10 +6,10 @@ import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
+// English names match the CLI subcommands the worker exposes.
 export const BACKENDS = Object.freeze({
   file: "mnemosyne-file",
   embedded: "mnemosyne-embedded",
-  hindsight: "hindsight",
 });
 
 const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
@@ -194,64 +194,63 @@ function workerCall(project, operation, payload) {
   });
 }
 
-function hindsightUrl(project, path) {
-  const base = (process.env.HINDSIGHT_API_URL || "http://localhost:8888").replace(/\/$/, "");
-  return `${base}${path}`;
-}
-
-async function hindsightRequest(project, method, path, body) {
-  const headers = { "Content-Type": "application/json" };
-  const token = process.env.HINDSIGHT_API_TOKEN || process.env.HINDSIGHT_API_KEY;
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(hindsightUrl(project, path), {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`Hindsight ${method} ${path} failed (${response.status}): ${text.slice(0, 500)}`);
-  return text ? JSON.parse(text) : {};
-}
-
-async function ensureHindsightBank(project) {
-  return hindsightRequest(project, "PUT", `/v1/default/banks/${project.bank}`, {
-    retain_extraction_mode: "chunks",
-    enable_observations: false,
-  });
-}
-
 async function backendCall(ctx, project, operation, payload = {}) {
   try {
-    if (project.backend === BACKENDS.hindsight) {
-      await ensureHindsightBank(project);
-      if (operation === "remember") {
-        return hindsightRequest(project, "POST", `/v1/default/banks/${project.bank}/memories`, {
-          items: [{ content: payload.content, context: "OpenCode session", metadata: payload.metadata || {} }],
-          async: false,
-        });
-      }
-      if (operation === "recall") {
-        const response = await hindsightRequest(project, "POST", `/v1/default/banks/${project.bank}/memories/recall`, {
-          query: payload.query,
-          types: ["world", "experience"],
-          budget: "low",
-          max_tokens: 2000,
-        });
-        return (response.results || []).map((item) => ({ content: item.text ?? item.content ?? "" })).filter((item) => item.content);
-      }
-      if (operation === "stats") return hindsightRequest(project, "GET", `/v1/default/banks/${project.bank}/stats`);
-      throw new Error(`Unknown Hindsight operation: ${operation}`);
-    }
-
     if (project.backend !== BACKENDS.file && project.backend !== BACKENDS.embedded) {
       throw new Error(`Unknown backend: ${project.backend}`);
     }
+
+    if (operation === "import_hindsight") {
+      // Mnemosyne's CLI-only import path. Run once instead of using the worker.
+      return await runCli(project, ["import-hindsight", payload.source], payload.bank);
+    }
+    if (operation === "backup") {
+      return await runCli(project, ["backup"].concat(payload.outputDir ? [payload.outputDir] : []));
+    }
+    if (operation === "verify") {
+      const args = ["verify"];
+      if (payload.quick !== false) args.push("--quick");
+      return await runCli(project, args);
+    }
+
     return workerCall(project, operation, payload);
   } catch (error) {
     updateProject(ctx, { lastError: error.message });
     throw error;
   }
+}
+
+function runCli(project, args) {
+  const env = {
+    ...process.env,
+    MNEMOSYNE_HOME: project.dataDir,
+    MNEMOSYNE_DATA_DIR: project.dataDir,
+    MNEMOSYNE_MCP_BANK: project.bank,
+    MNEMOSYNE_DEFAULT_SCOPE: "global",
+  };
+  if (project.backend === BACKENDS.file) env.MNEMOSYNE_NO_EMBEDDINGS = "1";
+  else delete env.MNEMOSYNE_NO_EMBEDDINGS;
+  if (process.env.MNEMOSYNE_BIN) {
+    env.MNEMOSYNE_BIN = process.env.MNEMOSYNE_BIN;
+  }
+
+  const explicit = process.env.MNEMOSYNE_BIN;
+  const command = explicit || "uvx";
+  const finalArgs = explicit
+    ? args
+    : ["--from", "mnemosyne-memory==3.15.1", "--with", "numpy", "mnemosyne", ...args];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, finalArgs, { env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("close", (code) => {
+      if (code === 0) resolve(stdout.trim());
+      else reject(new Error((stderr || stdout || `mnemosyne exited ${code}`).trim()));
+    });
+    child.on("error", reject);
+  });
 }
 
 function memoryBlock(results) {
@@ -280,12 +279,12 @@ function notify(ctx, sessionID, display, modelNote) {
 
 export function createMnemosyneCommand(ctx) {
   return {
-    name: "memory",
-    description: "Toggle and select automatic project memory",
+    name: "mnemosyne",
+    description: "Toggle and configure automatic project memory",
     async execute(input) {
       const sessionID = input.sessionID;
       const raw = (input.prompt?.text || "").trim();
-      const args = raw.replace(/^\/memory(?:\s+|$)/i, "").trim();
+      const args = raw.replace(/^\/mnemosyne(?:\s+|$)/i, "").trim();
       const [action, ...rest] = args.split(/\s+/).filter(Boolean);
       const command = (action || "").toLowerCase();
 
@@ -294,15 +293,17 @@ export function createMnemosyneCommand(ctx) {
           ctx,
           sessionID,
           [
-            "/memory — show this help",
-            "/memory on|off — enable or disable automatic memory for this project",
-            "/memory status — show backend, enabled state, bank and last error",
-            "/memory stats — show backend counters",
-            "/memory mnemosyne file — Mnemosyne without embeddings",
-            "/memory mnemosyne embedded — Mnemosyne with Ollama embeddings",
-            "/memory hindsight — Hindsight HTTP API",
+            "/mnemosyne — show this help",
+            "/mnemosyne on|off — enable or disable automatic memory for this project",
+            "/mnemosyne status — backend, enabled state, bank, storage, last error",
+            "/mnemosyne stats — backend counters",
+            "/mnemosyne mnemosyne file — Mnemosyne without embeddings",
+            "/mnemosyne mnemosyne embedded — Mnemosyne with Ollama embeddings",
+            "/mnemosyne backup [dir] — write a compressed database backup",
+            "/mnemosyne verify — check database integrity",
+            "/mnemosyne import hindsight <source> — import Hindsight memories from a file or URL",
           ].join("\n"),
-          "The user asked for /memory help. The command list was printed in chat; no action needed.",
+          "The user asked for mnemosyne help. The command list was printed in chat; no action needed.",
         );
       }
 
@@ -321,6 +322,32 @@ export function createMnemosyneCommand(ctx) {
         const project = getProject(ctx);
         const stats = await backendCall(ctx, project, "stats");
         return notify(ctx, sessionID, JSON.stringify(stats, null, 2).slice(0, 6000), "Backend memory statistics printed in chat.");
+      }
+
+      if (command === "backup") {
+        const project = getProject(ctx);
+        const outputDir = rest[0];
+        const result = await backendCall(ctx, project, "backup", { outputDir });
+        const reported = (result || `Backup completed`).toString().trim().split("\n").slice(0, 6).join("\n");
+        return notify(ctx, sessionID, reported, "Database backup completed; see backup path or directory above.");
+      }
+
+      if (command === "verify") {
+        const project = getProject(ctx);
+        const result = await backendCall(ctx, project, "verify", {
+          quick: !rest.includes("--full"),
+        });
+        return notify(ctx, sessionID, String(result ?? "ok"), "Database integrity check completed.");
+      }
+
+      if (command === "import" && rest[0] === "hindsight") {
+        const source = rest.slice(1).join(" ").trim();
+        if (!source) {
+          return notify(ctx, sessionID, "Usage: /mnemosyne import hindsight <file-or-url>", "Missing import source.");
+        }
+        const project = getProject(ctx);
+        const result = await backendCall(ctx, project, "import_hindsight", { source });
+        return notify(ctx, sessionID, String(result ?? "Import completed."), "Hindsight import completed.");
       }
 
       if (command === "on" || command === "off") {
@@ -355,7 +382,7 @@ export function createMnemosyneCommand(ctx) {
         );
       }
 
-      return notify(ctx, sessionID, `Unknown memory action: ${command}. Try /memory help.`, "The user used an unknown /memory action.");
+      return notify(ctx, sessionID, `Unknown memory action: ${command}. Try /mnemosyne help.`, "The user used an unknown /memory action.");
     },
   };
 }

@@ -1,24 +1,26 @@
-# `/memory` — native OpenCode memory plugin
+# `/mnemosyne` — native OpenCode memory plugin
 
-Eén native OpenCode v2-plugin met drie verwisselbare backends voor projectgebonden, automatisch geheugen. Activeer per project; standaard staat geheugen uit. Na activatie verrijkt de plugin prompts met relevante oude herinneringen en schrijft nieuwe user/assistant-turns terug naar de projectbank.
+One native OpenCode v2 plugin with selectable backends for project-bound automatic memory. Activate per project; memory is disabled by default. After activation the plugin enriches prompts with relevant older memories and writes new user/assistant turns back into the project bank.
 
-## Commando's
+## Commands
 
 ```text
-/memory                         toon commando help, verandert niets
-/memory on                      activeer automatisch geheugen voor dit project
-/memory off                     stop toekomstige injectie/write-back; oude data blijft
-/memory status                  toon backend, bank, data directory en last_error
-/memory mnemosyne file          gebruik Mnemosyne zonder embeddings (SQLite FTS)
-/memory mnemosyne embedded      gebruik Mnemosyne met Ollama embeddings
-/memory hindsight               gebruik Hindsight via HTTP
+/mnemosyne                         show command help, changes nothing
+/mnemosyne on                      enable automatic memory for this project
+/mnemosyne off                     stop future injection/write-back; old data stays
+/mnemosyne status                  show backend, bank, data directory and last_error
+/mnemosyne mnemosyne file          use Mnemosyne without embeddings (SQLite FTS)
+/mnemosyne mnemosyne embedded      use Mnemosyne with Ollama embeddings
+/mnemosyne backup [dir]            write a compressed database backup
+/mnemosyne verify                  check database integrity
+/mnemosyne import hindsight <src>  import Hindsight memories from a file or URL
 ```
 
-`/memory stats` toont backendstatistieken. De tool is **niet nodig voor dagelijks gebruik**: na activatie zijn recall en write-back automatisch.
+`/mnemosyne stats` shows backend statistics. The tool is **not needed for daily use**: after activation, recall and write-back are automatic.
 
-## Installatie
+## Installation
 
-Voeg de absolute directory toe aan de OpenCode v2 `plugins` array in `~/.config/opencode/opencode.jsonc`:
+Add the absolute directory to the OpenCode v2 `plugins` array in `~/.config/opencode/opencode.jsonc`:
 
 ```jsonc
 "plugins": [
@@ -26,35 +28,34 @@ Voeg de absolute directory toe aan de OpenCode v2 `plugins` array in `~/.config/
 ]
 ```
 
-Start daarna `opencode service restart` of start een nieuwe sessie. Deze configuratie verandert bestaande agents of MCP-servers niet.
+Then run `opencode service restart` or start a new session. This configuration changes neither agents nor MCP servers.
 
 ## Backends
 
-| Backend | Opslag | Extra service |
+| Backend | Storage | Extra service |
 |---|---|---|
-| `mnemosyne-file` | Mnemosyne SQLite + FTS, geen embeddings | geen |
-| `mnemosyne-embedded` | Mnemosyne + dense embeddings | Ollama `nomic-embed-text` op `localhost:11434` |
-| `hindsight` | Hindsight bank met `chunks` en ruwe recall | Hindsight API op `localhost:8888` |
+| `mnemosyne-file` | Mnemosyne SQLite + FTS, no embeddings | none |
+| `mnemosyne-embedded` | Mnemosyne + dense embeddings | Ollama `nomic-embed-text` on `localhost:11434` |
 
-Projectbanken heten `opencode_<16-hex-hash>` en gebruiken het canonieke projectpad als identiteit. Alles van deze plugin staat onder OpenCode's eigen datamap:
+Project banks are named `opencode_<16-hex-hash>` and use the canonical project path as their identity. Everything from this plugin lives under OpenCode's own data tree:
 
 ```
 ~/.local/share/opencode/storage/plugin/mnemosyne-opencode/projects.json
 ~/.local/share/opencode/storage/plugin/mnemosyne-opencode/data/banks/opencode_<hash>/
 ```
 
-Er zijn dus geen losse `~/.config/mnemosyne-opencode` of `~/.local/share/mnemosyne-opencode` mappen, en geen bestanden in de repo's zelf. `MNEMOSYNE_STATE_FILE` en `MNEMOSYNE_DATA_DIR` blijven als override bestaan zodat tests een eigen tijdelijke map gebruiken.
+There are no loose `~/.config/mnemosyne-opencode` or `~/.local/share/mnemosyne-opencode` directories, and nothing inside the repository itself. `MNEMOSYNE_STATE_FILE` and `MNEMOSYNE_DATA_DIR` remain as overrides so tests use their own temporary directory.
 
-`mnemosyne embedded` gebruikt `MNEMOSYNE_EMBEDDING_API_URL` (standaard `http://localhost:11434/v1`), `MNEMOSYNE_EMBEDDING_MODEL` (`nomic-embed-text`) en `MNEMOSYNE_EMBEDDING_DIM` (`768`). `hindsight` gebruikt `HINDSIGHT_API_URL` en optioneel `HINDSIGHT_API_TOKEN` voor authenticatie. De wrapper stuurt geen cloud-API-key naar lokale HTTP-Ollama.
+`mnemosyne embedded` uses `MNEMOSYNE_EMBEDDING_API_URL` (default `http://localhost:11434/v1`), `MNEMOSYNE_EMBEDDING_MODEL` (`nomic-embed-text`) and `MNEMOSYNE_EMBEDDING_DIM` (`768`). The wrapper never sends a cloud API key to local HTTP-Ollama.
 
-## Gedrag
+## Behavior
 
-- `/memory` zonder argumenten toont alleen help, als een zichtbare chatregel zonder modelcall.
-- De zichtbare uitvoer van elke `/memory`-subcommand staat in het `description`-veld van het synthetic bericht; de TUI slaat synthetische berichten zonder `description` over. `text` bevat alleen een korte modelnotitie.
-- Na activatie zoekt de plugin bij iedere prompt maximaal vier relevante herinneringen en voegt die als historisch bewijs in system context toe.
-- Nieuwe user/assistant-tekst wordt precies één keer per sessiecursor opgeslagen. Tooloutput en eerdere memory-injectie worden niet bewaard.
-- `/memory off` schakelt toekomstige recall-injectie en write-back uit zonder bestaande memories te verwijderen.
-- Fouten in recall/write-back worden gelogd en zijn zichtbaar via `/memory status` onder `last_error`.
+- `/mnemosyne` without arguments shows only help, as a visible chat line without a model call.
+- The visible output of every `/mnemosyne` subcommand lives in the `description` field of the synthetic message; the TUI skips synthetic messages without a `description`. `text` contains only a short model note.
+- After activation the plugin looks up at most four relevant memories per prompt and injects them as historical evidence in system context.
+- New user/assistant text is stored exactly once per session cursor. Tool output and earlier memory injections are never retained.
+- `/mnemosyne off` disables future recall injection and write-back without removing existing memories.
+- Recall/write-back errors are logged and visible via `/mnemosyne status` under `last_error`.
 
 ## Tests
 
@@ -64,10 +65,10 @@ npm install
 npm test
 ```
 
-De end-to-end-smoke gebruikt echte OpenCode-processen en vereist `OPENCODE_MODEL` met toegestane toolcalls:
+The end-to-end smoke test uses real OpenCode processes and requires `OPENCODE_MODEL` with allowed tool calls:
 
 ```bash
-OPENCODE_MODEL=kimi-code-plan-global/k3 bash scripts/smoke-native-abc.sh
+OPENCODE_MODEL=opencode/space-bunny-free bash scripts/smoke-native-abc.sh
 ```
 
-De test bewijst per backend dat een unieke conventie uit sessie A zonder handmatige remember/recall in sessie B wordt beantwoord. Sla geen geheimen op in prompts; memories zijn onleesbaar voor onbevoegde projectbanken maar staan lokaal in leesbare opslag.
+The test proves per backend that a unique convention from session A is answered in session B without manual remember/recall. Never store secrets in prompts; memories are unreadable from other project banks but live in plain-text local storage.

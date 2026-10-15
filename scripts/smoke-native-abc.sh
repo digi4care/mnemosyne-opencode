@@ -8,7 +8,7 @@ GLOBAL_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.jsonc"
 GLOBAL_BEFORE="$(sha256sum "$GLOBAL_CONFIG" | cut -d' ' -f1)"
 MODELS=("$@")
 if (( ${#MODELS[@]} == 0 )); then
-  MODELS=(mnemosyne-file mnemosyne-embedded hindsight)
+  MODELS=(mnemosyne-file mnemosyne-embedded)
 fi
 
 for required in opencode curl python uvx; do
@@ -38,21 +38,17 @@ new_session() {
 memory_command() {
   local session_id="$1"
   local text="$2"
-  opencode api post "/api/session/$session_id/command" --data "{\"name\":\"memory\",\"text\":\"$text\"}" >/dev/null
+  opencode api post "/api/session/$session_id/command" --data "{\"name\":\"mnemosyne\",\"text\":\"$text\"}" >/dev/null
 }
 
 for backend in "${MODELS[@]}"; do
   case "$backend" in
     mnemosyne-file)
-      command_name="mnemosyne file"
+      command_name="mnemosyne mnemosyne file"
       ;;
     mnemosyne-embedded)
-      command_name="mnemosyne embedded"
+      command_name="mnemosyne mnemosyne embedded"
       curl -fsS --max-time 5 "http://localhost:11434/api/tags" >/dev/null
-      ;;
-    hindsight)
-      command_name="hindsight"
-      curl -fsS --max-time 5 "http://localhost:8888/health" >/dev/null
       ;;
     *)
       echo "Unknown backend: $backend" >&2
