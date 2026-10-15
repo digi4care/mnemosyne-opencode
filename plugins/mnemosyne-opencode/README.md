@@ -1,74 +1,85 @@
-# `/mnemosyne` — native OpenCode memory plugin
+# Mnemosyne OpenCode plugin
 
-One native OpenCode v2 plugin with selectable backends for project-bound automatic memory. Activate per project; memory is disabled by default. After activation the plugin enriches prompts with relevant older memories and writes new user/assistant turns back into the project bank.
+Automatic, project-scoped memory for OpenCode. Backed by Mnemosyne. Once enabled
+in a project, the plugin recalls relevant past memories before each prompt and
+writes new user/assistant turns back to the project bank. No model-driven
+remember/recall required.
 
-## Commands
+**Backends**
+- `mnemosyne-file` — SQLite + FTS, no embeddings (offline, recommended default).
+- `mnemosyne-embedded` — adds dense embeddings via Ollama `nomic-embed-text`.
 
-```text
-/mnemosyne                         show command help, changes nothing
-/mnemosyne on                      enable automatic memory for this project
-/mnemosyne off                     stop future injection/write-back; old data stays
-/mnemosyne status                  show backend, bank, data directory and last_error
-/mnemosyne mnemosyne file          use Mnemosyne without embeddings (SQLite FTS)
-/mnemosyne mnemosyne embedded      use Mnemosyne with Ollama embeddings
-/mnemosyne backup [dir]            write a compressed database backup
-/mnemosyne verify                  check database integrity
-/mnemosyne import hindsight <src>  import Hindsight memories from a file or URL
-```
+**Commands**
+<|channel|> Command | Action |
+|---|---|
+| `/mnemosyne` | show help |
+| `/mnemosyne on\|off` | enable/disable automatic memory for this project |
+| `/mnemosyne status` | backend, enabled, bank, storage, last error |
+| `/mnemosyne stats` | backend counters |
+| `/mnemosyne mnemosyne file` | Mnemosyne without embeddings |
+| `/mnemosyne mnemosyne embedded` | Mnemosyne with Ollama embeddings |
+| `/mnemosyne backup [dir]` | write a compressed `.db.gz` backup |
+| `/mnemosyne verify` | database integrity check |
+| `/mnemosyne import hindsight <src>` | import legacy Hindsight data |
 
-`/mnemosyne stats` shows backend statistics. The tool is **not needed for daily use**: after activation, recall and write-back are automatic.
+## Prerequisites
+
+- OpenCode v2 (≥ 2.0.18).
+- `uvx` (provided by `uv`).
+- `mnemosyne-memory==3.15.1` available via PyPI.
+- Optional: Ollama on `localhost:11434` with `nomic-embed-text` for the
+  `embedded` backend.
+- Node 20+.
 
 ## Installation
 
-Add the absolute directory to the OpenCode v2 `plugins` array in `~/.config/opencode/opencode.jsonc`:
+1. Add this plugin to your OpenCode config (`~/.config/opencode/opencode.jsonc`):
+   ```jsonc
+   "plugins": [
+     "/absolute/path/to/mnemosyne-opencode"
+   ]
+   ```
+2. Restart OpenCode (`opencode service restart`) or start a fresh session.
+3. Pick a project directory.
 
-```jsonc
-"plugins": [
-  "/home/digi4care/projects/opencode-ab-test-Mnemosyne-vs-Hindsight/plugins/mnemosyne-opencode"
-]
+## Quick start
+
+```text
+# Once per project
+/mnemosyne
+/mnemosyne mnemosyne file
+/mnemosyne on
+
+# Then just work. Everything is automatic:
+#  - relevant memories are injected before each prompt
+#  - new turns get stored once per session cursor
 ```
 
-Then run `opencode service restart` or start a new session. This configuration changes neither agents nor MCP servers.
+Check state with `/mnemosyne status`. Disable or quiet background failures with
+`/mnemosyne off`.
 
-## Backends
+## Environment variables
 
-| Backend | Storage | Extra service |
-|---|---|---|
-| `mnemosyne-file` | Mnemosyne SQLite + FTS, no embeddings | none |
-| `mnemosyne-embedded` | Mnemosyne + dense embeddings | Ollama `nomic-embed-text` on `localhost:11434` |
+| Var | Default | Purpose |
+| --- | --- | --- |
+| `MNEMOSYNE_STATE_FILE` | `~/.local/share/opencode/storage/plugin/mnemosyne-opencode/projects.json` | per-project state |
+| `MNEMOSYNE_DATA_DIR` | `~/.local/share/opencode/storage/plugin/mnemosyne-opencode/data/banks/opencode_<hash>` | bank DB directory |
+| `MNEMOSYNE_NO_EMBEDDINGS` | (1 when file) | disables embeddings without changing bank |
+| `MNEMOSYNE_EMBEDDING_API_URL` | `http://localhost:11434/v1` | Ollama base URL (embedded only) |
+| `MNEMOSYNE_EMBEDDING_MODEL` | `nomic-embed-text` | embedding model name |
+| `MNEMOSYNE_EMBEDDING_DIM` | `768` | dimension |
+| `MNEMOSYNE_MCP_BANK` | auto | bank name override |
+| `HINDSIGHT_API_URL` / `HINDSIGHT_API_TOKEN` | `http://localhost:8888` | only for `import hindsight` |
+| `OPENCODE_MODEL` | takes precedence over file default in the smoke script | smoke-model hint |
 
-Project banks are named `opencode_<16-hex-hash>` and use the canonical project path as their identity. Everything from this plugin lives under OpenCode's own data tree:
+## Troubleshooting
 
-```
-~/.local/share/opencode/storage/plugin/mnemosyne-opencode/projects.json
-~/.local/share/opencode/storage/plugin/mnemosyne-opencode/data/banks/opencode_<hash>/
-```
+- No recall: `/mnemosyne status`; check `last_error` in output.
+- Embedded backend impotent: ensure Ollama has `nomic-embed-text` pulled.
+- Backup output empty: check dir permissions (defaults to storage root).
+- Whenever in doubt, `/mnemosyne status` is the source of truth; errors are
+  surfaced, never swallowed.
 
-There are no loose `~/.config/mnemosyne-opencode` or `~/.local/share/mnemosyne-opencode` directories, and nothing inside the repository itself. `MNEMOSYNE_STATE_FILE` and `MNEMOSYNE_DATA_DIR` remain as overrides so tests use their own temporary directory.
+## License
 
-`mnemosyne embedded` uses `MNEMOSYNE_EMBEDDING_API_URL` (default `http://localhost:11434/v1`), `MNEMOSYNE_EMBEDDING_MODEL` (`nomic-embed-text`) and `MNEMOSYNE_EMBEDDING_DIM` (`768`). The wrapper never sends a cloud API key to local HTTP-Ollama.
-
-## Behavior
-
-- `/mnemosyne` without arguments shows only help, as a visible chat line without a model call.
-- The visible output of every `/mnemosyne` subcommand lives in the `description` field of the synthetic message; the TUI skips synthetic messages without a `description`. `text` contains only a short model note.
-- After activation the plugin looks up at most four relevant memories per prompt and injects them as historical evidence in system context.
-- New user/assistant text is stored exactly once per session cursor. Tool output and earlier memory injections are never retained.
-- `/mnemosyne off` disables future recall injection and write-back without removing existing memories.
-- Recall/write-back errors are logged and visible via `/mnemosyne status` under `last_error`.
-
-## Tests
-
-```bash
-cd plugins/mnemosyne-opencode
-npm install
-npm test
-```
-
-The end-to-end smoke test uses real OpenCode processes and requires `OPENCODE_MODEL` with allowed tool calls:
-
-```bash
-OPENCODE_MODEL=opencode/space-bunny-free bash scripts/smoke-native-abc.sh
-```
-
-The test proves per backend that a unique convention from session A is answered in session B without manual remember/recall. Never store secrets in prompts; memories are unreadable from other project banks but live in plain-text local storage.
+MIT. Local data, not shared; backups are plaintext.
