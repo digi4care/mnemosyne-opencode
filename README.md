@@ -17,7 +17,7 @@ per-project Mnemosyne memory.
 
 ```bash
 # add the absolute path to OpenCode's config
-"plugins": [ "/absolute/.../plugins/mnemosyne-opencode" ]
+"plugins": [ "/home/digi4care/projects/opencode-ab-test-Mnemosyne-vs-Hindsight/plugins/mnemosyne-opencode" ]
 
 opencode service restart
 ```
