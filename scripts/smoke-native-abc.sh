@@ -70,7 +70,7 @@ for backend in "${MODELS[@]}"; do
   run_agent "What is the exact project convention token for this project? Reply with only the token." "$run_dir/recall.jsonl"
   python "$ROOT/scripts/check_native_smoke.py" "$run_dir/store.jsonl" "$run_dir/recall.jsonl" "$marker"
   printf '%s\n' "$marker" >"$run_dir/marker.txt"
-  memory_command "$session_a" "/memory off"
+  memory_command "$session_a" "/mnemosyne off"
   printf 'PASS: %s\n' "$backend"
 done
 
