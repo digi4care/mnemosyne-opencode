@@ -297,8 +297,8 @@ export function createMnemosyneCommand(ctx) {
             "/mnemosyne on|off — enable or disable automatic memory for this project",
             "/mnemosyne status — backend, enabled state, bank, storage, last error",
             "/mnemosyne stats — backend counters",
-            "/mnemosyne mnemosyne file — Mnemosyne without embeddings",
-            "/mnemosyne mnemosyne embedded — Mnemosyne with Ollama embeddings",
+            "/mnemosyne file — Mnemosyne without embeddings",
+            "/mnemosyne embedded — Mnemosyne with Ollama embeddings",
             "/mnemosyne backup [dir] — write a compressed database backup",
             "/mnemosyne verify — check database integrity",
             "/mnemosyne import hindsight <source> — import Hindsight memories from a file or URL",
@@ -360,7 +360,14 @@ export function createMnemosyneCommand(ctx) {
         );
       }
 
-      const backendAction = command === "mnemosyne" ? `${command}-${rest[0]}` : command;
+      // Determine backend from command: supports `/mnemosyne file`, `/mnemosyne embedded`,
+      // and legacy `/mnemosyne mnemosyne file` / `/mnemosyne mnemosyne embedded`.
+      let backendAction = command;
+      if (command === "file" || command === "embedded") {
+        backendAction = `mnemosyne-${command}`;
+      } else if (command === "mnemosyne" && rest[0] && (rest[0] === "file" || rest[0] === "embedded")) {
+        backendAction = `mnemosyne-${rest[0]}`;
+      }
       const backendNames = Object.values(BACKENDS);
       if (backendNames.includes(backendAction)) {
         const project = updateProject(ctx, { backend: backendAction, enabled: true });
