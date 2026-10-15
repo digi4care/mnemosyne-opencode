@@ -1,0 +1,9 @@
+.env
+.mnemosyne/
+.venv/
+__pycache__/
+*.py[cod]
+results/
+node_modules/
+coverage/
+.slim/deepwork/

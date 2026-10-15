@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "mnemosyne": {
+        "type": "local",
+        "command": ["bash", "scripts/mnemosyne-mcp.sh"],
+        "codemode": false,
+        "timeout": {
+          "startup": 60000,
+          "catalog": 30000,
+          "execution": 120000
+        }
+      }
+    }
+  }
+}

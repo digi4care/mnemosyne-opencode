@@ -1,0 +1,14 @@
+{
+  "name": "mnemosyne-opencode",
+  "version": "0.1.0",
+  "description": "Native OpenCode plugin with selectable Mnemosyne and Hindsight project-memory backends",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test",
+    "smoke": "bash ../../scripts/smoke-native-abc.sh"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "^2.0.18"
+  }
+}
