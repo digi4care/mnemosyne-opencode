@@ -1,4 +1,5 @@
 import { Plugin } from "@opencode/plugin";
+import { applyEdits, modify, parse } from "jsonc-parser";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -28,6 +29,89 @@ const STORAGE_ROOT = join(homedir(), ".local", "share", "opencode", "storage", "
 
 function statePath() {
   return process.env.MNEMOSYNE_STATE_FILE || join(STORAGE_ROOT, "projects.json");
+}
+
+// Configuration lives in the `mnemosyne` block of opencode.jsonc, never in
+// projects.json. Projects have no runtime dependencies, so the plugin does not
+// assume a project is a git checkout; a plain directory without a config file is
+// perfectly valid.
+const CONFIG_KEYS = Object.freeze(["enabled", "backend", "recallLimit", "globalBank", "dataDir"]);
+const DEFAULT_RECALL_LIMIT = 4;
+const KNOWN_BACKENDS = new Set(Object.values(BACKENDS));
+
+function globalConfigPath() {
+  const base = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  return join(base, "opencode", "opencode.jsonc");
+}
+
+function projectConfigPath(directory) {
+  return join(directory, "opencode.jsonc");
+}
+
+function readJsoncFile(path) {
+  if (!existsSync(path)) return {};
+  const text = readFileSync(path, "utf8");
+  if (!text.trim()) return {};
+  const errors = [];
+  const parsed = parse(text, errors, { allowTrailingComma: true, disallowComments: false });
+  if (errors.length) {
+    throw new Error(`Cannot parse ${path}: ${errors[0].error} at offset ${errors[0].offset}`);
+  }
+  return parsed && typeof parsed === "object" ? parsed : {};
+}
+
+function readConfigBlock(path) {
+  const block = readJsoncFile(path).mnemosyne;
+  return block && typeof block === "object" ? block : {};
+}
+
+// Merge order: defaults < global config < project config < legacy state.
+// The legacy layer is only consulted for keys the config does not mention, so an
+// existing installation keeps working without a migration step.
+function resolveConfig(directory) {
+  const global = readConfigBlock(globalConfigPath());
+  const project = readConfigBlock(projectConfigPath(directory));
+  return { ...global, ...project };
+}
+
+function pickConfig(config, legacy, key, fallback) {
+  if (config[key] !== undefined) return config[key];
+  if (legacy[key] !== undefined) return legacy[key];
+  return fallback;
+}
+
+function validateConfigValue(key, value) {
+  if (key === "backend" && !KNOWN_BACKENDS.has(value)) {
+    throw new Error(`Unknown backend: ${value}. Expected one of ${[...KNOWN_BACKENDS].join(", ")}.`);
+  }
+  if (key === "recallLimit") {
+    if (!Number.isInteger(value) || value < 1 || value > 20) {
+      throw new Error(`recallLimit must be an integer between 1 and 20, got ${JSON.stringify(value)}.`);
+    }
+  }
+  if (key === "enabled" || key === "globalBank") {
+    if (typeof value !== "boolean") throw new Error(`${key} must be true or false.`);
+  }
+}
+
+// Surgical write: only the `mnemosyne` block is touched, and comments plus
+// formatting elsewhere in the file are preserved byte for byte.
+// Exported so the write guard can be tested directly.
+export function writeProjectConfig(directory, changes) {
+  const path = projectConfigPath(directory);
+  const original = existsSync(path) ? readFileSync(path, "utf8") : "{\n}\n";
+  let text = original;
+  for (const [key, value] of Object.entries(changes)) {
+    validateConfigValue(key, value);
+    text = applyEdits(text, modify(text, ["mnemosyne", key], value, {
+      formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
+    }));
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.tmp-${process.pid}`;
+  writeFileSync(temporary, text.endsWith("\n") ? text : `${text}\n`, { mode: 0o600 });
+  renameSync(temporary, path);
+  return path;
 }
 
 function defaultDataDir() {
@@ -63,16 +147,27 @@ export function projectIdentity(ctx) {
 export function getProject(ctx) {
   const identity = projectIdentity(ctx);
   const saved = loadState().projects[identity.id] || {};
+  const config = resolveConfig(identity.directory);
   return {
     ...identity,
-    enabled: saved.enabled === true,
-    backend: saved.backend || BACKENDS.file,
+    enabled: pickConfig(config, saved, "enabled", false) === true,
+    backend: pickConfig(config, saved, "backend", BACKENDS.file),
+    recallLimit: pickConfig(config, saved, "recallLimit", DEFAULT_RECALL_LIMIT),
+    globalBank: pickConfig(config, saved, "globalBank", true) !== false,
+    dataDir: pickConfig(config, saved, "dataDir", defaultDataDir()),
     lastError: saved.lastError || "",
-    dataDir: saved.dataDir || defaultDataDir(),
+    // Which layers actually spoke. Reported by /mnemosyne status so the user can
+    // see whether the config file or the legacy state file is in charge.
+    configSources: {
+      global: existsSync(globalConfigPath()),
+      project: existsSync(projectConfigPath(identity.directory)),
+      legacy: Object.keys(saved).length > 0,
+    },
   };
 }
 
-function updateProject(ctx, changes) {
+// Runtime state only. Configuration changes never pass through here.
+function updateState(ctx, changes) {
   const identity = projectIdentity(ctx);
   const state = loadState();
   const previous = state.projects[identity.id] || {};
@@ -82,11 +177,30 @@ function updateProject(ctx, changes) {
     directory: identity.directory,
     name: identity.name,
     bank: identity.bank,
-    dataDir: previous.dataDir || defaultDataDir(),
     updatedAt: new Date().toISOString(),
   };
   saveState(state);
   return getProject(ctx);
+}
+
+// Configuration only. Writes the project's opencode.jsonc, never projects.json.
+function updateConfig(ctx, changes) {
+  const identity = projectIdentity(ctx);
+  writeProjectConfig(identity.directory, changes);
+  return getProject(ctx);
+}
+
+function describeConfigSources(project) {
+  const { global, project: local, legacy } = project.configSources;
+  const active = [];
+  if (local) active.push("project opencode.jsonc");
+  if (global) active.push("global opencode.jsonc");
+  if (!active.length) active.push(legacy ? "projects.json (legacy)" : "defaults");
+  return active.join(" < ");
+}
+
+export function configPathFor(ctx) {
+  return projectConfigPath(projectIdentity(ctx).directory);
 }
 
 export function stripInjectedMemory(text) {
@@ -215,7 +329,7 @@ async function backendCall(ctx, project, operation, payload = {}) {
 
     return workerCall(project, operation, payload);
   } catch (error) {
-    updateProject(ctx, { lastError: error.message });
+    updateState(ctx, { lastError: error.message });
     throw error;
   }
 }
@@ -313,7 +427,16 @@ export function createMnemosyneCommand(ctx) {
         return notify(
           ctx,
           sessionID,
-          `enabled: ${project.enabled}\nbackend: ${project.backend}\nbank: ${project.bank}\nproject: ${project.directory}\ndata: ${project.dataDir}${error}`,
+          [
+            `enabled: ${project.enabled}`,
+            `backend: ${project.backend}`,
+            `recallLimit: ${project.recallLimit}`,
+            `globalBank: ${project.globalBank}`,
+            `bank: ${project.bank}`,
+            `project: ${project.directory}`,
+            `data: ${project.dataDir}`,
+            `config: ${describeConfigSources(project)}`,
+          ].join("\n") + error,
           `Project memory status printed in chat: enabled=${project.enabled}, backend=${project.backend}.`,
         );
       }
@@ -351,12 +474,12 @@ export function createMnemosyneCommand(ctx) {
       }
 
       if (command === "on" || command === "off") {
-        const project = updateProject(ctx, { enabled: command === "on" });
+        const project = updateConfig(ctx, { enabled: command === "on" });
         return notify(
           ctx,
           sessionID,
-          `Mnemosyne ${project.enabled ? "enabled" : "disabled"} for ${project.name}`,
-          `Project memory is now ${project.enabled ? "enabled" : "disabled"} for this project.`,
+          `Mnemosyne ${project.enabled ? "enabled" : "disabled"} for ${project.name}\nwrote: ${configPathFor(ctx)}`,
+          `Project memory is now ${project.enabled ? "enabled" : "disabled"} for this project. The setting was written to the project config file.`,
         );
       }
 
@@ -370,7 +493,7 @@ export function createMnemosyneCommand(ctx) {
       }
       const backendNames = Object.values(BACKENDS);
       if (backendNames.includes(backendAction)) {
-        const project = updateProject(ctx, { backend: backendAction, enabled: true });
+        const project = updateConfig(ctx, { backend: backendAction, enabled: true });
         return notify(
           ctx,
           sessionID,
@@ -380,7 +503,7 @@ export function createMnemosyneCommand(ctx) {
       }
 
       if (command === "backend" && backendNames.includes(rest[0])) {
-        const project = updateProject(ctx, { backend: rest[0] });
+        const project = updateConfig(ctx, { backend: rest[0] });
         return notify(
           ctx,
           sessionID,
@@ -417,9 +540,9 @@ export default Plugin.define({
       const query = event.prompt?.text?.trim();
       if (!query) return;
       try {
-        const results = await backendCall(ctx, project, "recall", { query, limit: 4 });
+        const results = await backendCall(ctx, project, "recall", { query, limit: project.recallLimit });
         recallBySession.set(event.sessionID, results);
-        updateProject(ctx, { lastError: "" });
+        updateState(ctx, { lastError: "" });
       } catch (error) {
         recallBySession.delete(event.sessionID);
         console.error(`Mnemosyne recall failed: ${error.message}`);
@@ -447,7 +570,7 @@ export default Plugin.define({
         });
       }
       turnCounts.set(sessionID, turns.length);
-      updateProject(ctx, { lastError: "" });
+      updateState(ctx, { lastError: "" });
     };
 
     void (async () => {

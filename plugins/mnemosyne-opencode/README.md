@@ -10,17 +10,57 @@ remember/recall required.
 - `mnemosyne-embedded` — adds dense embeddings via Ollama `nomic-embed-text`.
 
 **Commands**
-<|channel|> Command | Action |
+
+| Command | Action |
 |---|---|
 | `/mnemosyne` | show help |
 | `/mnemosyne on\|off` | enable/disable automatic memory for this project |
-| `/mnemosyne status` | backend, enabled, bank, storage, last error |
+| `/mnemosyne status` | backend, enabled, bank, storage, config source, last error |
 | `/mnemosyne stats` | backend counters |
-| `/mnemosyne mnemosyne file` | Mnemosyne without embeddings |
-| `/mnemosyne mnemosyne embedded` | Mnemosyne with Ollama embeddings |
+| `/mnemosyne file` | Mnemosyne without embeddings |
+| `/mnemosyne embedded` | Mnemosyne with Ollama embeddings |
 | `/mnemosyne backup [dir]` | write a compressed `.db.gz` backup |
 | `/mnemosyne verify` | database integrity check |
 | `/mnemosyne import hindsight <src>` | import legacy Hindsight data |
+
+## Configuration
+
+Configuration lives in an `mnemosyne` block in `opencode.jsonc`, not in the plugin's
+state file. Global defaults go in `~/.config/opencode/opencode.jsonc`; per-project
+overrides go in the project's own `opencode.jsonc`.
+
+```jsonc
+// ~/.config/opencode/opencode.jsonc
+{
+  "mnemosyne": {
+    "backend": "mnemosyne-file",
+    "recallLimit": 4,
+    "enabled": false,
+    "globalBank": true
+  }
+}
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `enabled` | boolean | `false` | memory on for this project |
+| `backend` | string | `mnemosyne-file` | `mnemosyne-file` or `mnemosyne-embedded` |
+| `recallLimit` | integer 1–20 | `4` | memories injected per prompt |
+| `globalBank` | boolean | `true` | also recall from the shared global bank |
+| `dataDir` | string | storage root | override the bank directory |
+
+**Precedence:** project config, then global config, then the legacy
+`projects.json` value, then the default. `/mnemosyne status` prints which layer
+won, so a disagreement is visible rather than silent.
+
+**`/mnemosyne on|off` writes the project's `opencode.jsonc`.** It touches only the
+`mnemosyne` block and preserves comments and formatting elsewhere in the file. The
+command reports the path it wrote. Note that this creates a file in your project
+directory, which is likely to be picked up by version control — that is usually
+what you want for a shared team setting, but be aware of it.
+
+**Environment variables still win over config** for the variables the plugin sets
+itself, notably `MNEMOSYNE_NO_EMBEDDINGS`, which is derived from `backend`.
 
 ## Prerequisites
 
@@ -62,7 +102,7 @@ Check state with `/mnemosyne status`. Disable or quiet background failures with
 
 | Var | Default | Purpose |
 | --- | --- | --- |
-| `MNEMOSYNE_STATE_FILE` | `~/.local/share/opencode/storage/plugin/mnemosyne-opencode/projects.json` | per-project state |
+| `MNEMOSYNE_STATE_FILE` | `~/.local/share/opencode/storage/plugin/mnemosyne-opencode/projects.json` | per-project runtime state (`last_error`, `updated_at`) |
 | `MNEMOSYNE_DATA_DIR` | `~/.local/share/opencode/storage/plugin/mnemosyne-opencode/data/banks/opencode_<hash>` | bank DB directory |
 | `MNEMOSYNE_NO_EMBEDDINGS` | (1 when file) | disables embeddings without changing bank |
 | `MNEMOSYNE_EMBEDDING_API_URL` | `http://localhost:11434/v1` | Ollama base URL (embedded only) |

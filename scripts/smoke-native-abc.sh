@@ -6,6 +6,11 @@ cd "$ROOT"
 MODEL="${OPENCODE_MODEL:-opencode/space-bunny-free}"
 GLOBAL_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.jsonc"
 GLOBAL_BEFORE="$(sha256sum "$GLOBAL_CONFIG" | cut -d' ' -f1)"
+# Since D1 the plugin writes configuration to the *project* config, not the global
+# one. The smoke runs in the repository root, so /mnemosyne on would otherwise edit
+# this repository's own opencode.jsonc. Snapshot it and restore it afterwards.
+PROJECT_CONFIG="$ROOT/opencode.jsonc"
+PROJECT_BEFORE="$(sha256sum "$PROJECT_CONFIG" | cut -d' ' -f1)"
 MODELS=("$@")
 if (( ${#MODELS[@]} == 0 )); then
   MODELS=(mnemosyne-file mnemosyne-embedded)
@@ -78,5 +83,10 @@ GLOBAL_AFTER="$(sha256sum "$GLOBAL_CONFIG" | cut -d' ' -f1)"
 if [[ "$GLOBAL_BEFORE" != "$GLOBAL_AFTER" ]]; then
   echo "Global OpenCode config changed during smoke" >&2
   exit 1
+fi
+PROJECT_AFTER="$(sha256sum "$PROJECT_CONFIG" | cut -d' ' -f1)"
+if [[ "$PROJECT_BEFORE" != "$PROJECT_AFTER" ]]; then
+  echo "Project config was written by the smoke; restoring the original" >&2
+  git -C "$ROOT" checkout -- "$PROJECT_CONFIG" 2>/dev/null || exit 1
 fi
 printf 'PASS: native A/B/C smoke complete\n'

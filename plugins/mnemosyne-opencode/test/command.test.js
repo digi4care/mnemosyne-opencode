@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKENDS, createMnemosyneCommand, getProject } from "../index.js";
@@ -9,6 +9,12 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "memory-command-"));
   process.env.MNEMOSYNE_STATE_FILE = join(root, "projects.json");
   process.env.MNEMOSYNE_DATA_DIR = join(root, "data");
+  process.env.XDG_CONFIG_HOME = join(root, "config");
+  // Since D1 the plugin writes configuration to the project's opencode.jsonc, so
+  // the project directory must be inside the temp root. Pointing it at a fixed
+  // path would make tests write outside the sandbox and leak between runs.
+  const projectDir = join(root, "project");
+  mkdirSync(projectDir, { recursive: true });
   // The TUI renders `description`, not `text` (see routes/session/rows.ts:
   // synthetic messages without a description are skipped entirely). Assert on
   // the field the user actually sees, and record `resume` so a model-free
@@ -16,7 +22,7 @@ function fixture() {
   const replies = [];
   const calls = [];
   const ctx = {
-    location: { directory: "/tmp/example-project", project: { canonical: "/tmp/example-project" } },
+    location: { directory: projectDir, project: { canonical: projectDir } },
     session: {
       synthetic: async ({ text, description, resume }) => {
         replies.push(description);
@@ -25,7 +31,7 @@ function fixture() {
       },
     },
   };
-  return { ctx, command: createMnemosyneCommand(ctx), replies, calls, root };
+  return { ctx, command: createMnemosyneCommand(ctx), replies, calls, root, projectDir };
 }
 
 function cleanup(root) {
@@ -33,6 +39,7 @@ function cleanup(root) {
   delete process.env.MNEMOSYNE_STATE_FILE;
   delete process.env.MNEMOSYNE_DATA_DIR;
   delete process.env.MNEMOSYNE_BIN;
+  delete process.env.XDG_CONFIG_HOME;
 }
 
 test("bare /mnemosyne shows how-to without changing project state", async (t) => {

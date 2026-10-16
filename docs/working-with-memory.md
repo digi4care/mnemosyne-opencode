@@ -21,10 +21,12 @@ You never call remember or recall yourself. The model does not decide what to st
 **1. Enable once per project.**
 ```
 /mnemosyne
-/mnemosyne mnemosyne file
+/mnemosyne file
 /mnemosyne on
 ```
-Do this once. From then on it is automatic.
+Do this once. From then on it is automatic. `/mnemosyne on` writes the `mnemosyne`
+block in the project's `opencode.jsonc`; it touches only that block and leaves
+comments and other settings alone.
 
 **2. Do not repeat yourself. The plugin already writes it down.**
 Every turn you type is stored. Repeating a decision because you assume it was lost
@@ -64,7 +66,8 @@ but never shown to you otherwise.
 | No consolidation | `episodic_memory` stays empty; there is no summarised layer |
 | No secrets handling | memories are stored as plain text in a local SQLite file. Do not paste credentials into a prompt |
 
-The first two are planned and specified in the [PRD](PRD-memory-lifecycle.md).
+The first two are specified in the [PRD](PRD-memory-lifecycle.md) and built in phases
+2 and 5 of its implementation order. The third is a deliberate choice, not a defect.
 
 ## Why it is built this way
 
