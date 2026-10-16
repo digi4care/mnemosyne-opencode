@@ -7,3 +7,6 @@ results/
 node_modules/
 coverage/
 .slim/deepwork/
+
+# Dutch interview notes: private, never published
+interview/

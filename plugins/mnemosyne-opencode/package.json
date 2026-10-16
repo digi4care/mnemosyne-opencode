@@ -1,5 +1,5 @@
 {
-  "name": "mnemosyne-opencode",
+  "name": "@digi4care/mnemosyne-opencode",
   "version": "0.2.0",
   "description": "Automatic, per-project long-term memory for OpenCode, backed by Mnemosyne",
   "keywords": [
@@ -10,13 +10,13 @@
     "agent-memory",
     "llm"
   ],
-  "homepage": "https://github.com/ChrisEngelhard/mnemosyne-opencode#readme",
+  "homepage": "https://github.com/digi4care/mnemosyne-opencode#readme",
   "bugs": {
-    "url": "https://github.com/ChrisEngelhard/mnemosyne-opencode/issues"
+    "url": "https://github.com/digi4care/mnemosyne-opencode/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ChrisEngelhard/mnemosyne-opencode.git"
+    "url": "git+https://github.com/digi4care/mnemosyne-opencode.git"
   },
   "license": "MIT",
   "author": "Chris Engelhard <chris@chrisengelhard.nl>",
@@ -36,5 +36,8 @@
   },
   "devDependencies": {
     "@opencode/plugin": "^2.0.18"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
