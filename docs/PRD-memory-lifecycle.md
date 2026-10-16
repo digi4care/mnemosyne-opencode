@@ -1,72 +1,82 @@
-# PRD — Memory lifecycle en configuratie van de Mnemosyne OpenCode plugin
+# PRD — Memory lifecycle and configuration of the Mnemosyne OpenCode plugin
 
-Status: **besluiten genomen, implementatie geblokkeerd door §12** · Versie 1.1 · 16 oktober 2026 · auteur: Chris Engelhard
+Status: **all design questions answered; implementation ready** · Version 1.2 · 16 October 2026 · Author: Chris Engelhard
 
-Alle vier de openstaande vragen zijn beantwoord (§8) en de persona-vraag met nee (§11.1). Dit document is nog **niet** klaar als opdracht: §12 bevat twee blokkades, waarvan D3 (per-type vervalbaarheid) drie ontwerpbesluiten mist. Onderdelen 1, 2 en 3 uit §7 kunnen wel direct, mits hun onderlinge volgorde wordt gerespecteerd (§12 B6).
+Every open design question has been answered (§8). Two earlier recommendations of mine were withdrawn after research (§11.2, §12.2). This document was translated from Dutch on 16 October 2026; the Dutch original is preserved in the private archive repository `digi4care/mnemosyne-opencode-research-history`.
 
 ---
 
-## 0. Kern
+## 0. Summary
 
-Vier vragen, vier conclusies:
+Four questions, four answers:
 
-| # | Vraag | Conclusie | Werk |
+| # | Question | Answer | Size |
 |---|---|---|---|
-| 1 | Configuratie | Plugin heeft géén config-bestand; leest `opencode.jsonc` nergens | medium |
-| 2 | Staleness | Plugin doet **niets** aan up-to-date houden; Mnemosyne heeft de machines wél, maar ze staan uit | medium |
-| 3 | Tiers en backends | File vs embedded verschilt alleen in ranking, niet in opslag | klein, vooral documentatie |
-| 4 | Globale memory | Elke project is een eigen bank. Persoonlijke voorkeuren moet je per project herhalen | klein, hoge waarde |
+| 1 | Configuration | The plugin has **no** config file and never reads `opencode.jsonc` | medium |
+| 2 | Staleness | The plugin does **nothing** about keeping memories current | medium |
+| 3 | Tiers and backends | File versus embedded differs only in ranking, not in storage | small, mostly documentation |
+| 4 | Global memory | Every project is its own bank, so personal facts must be repeated per project | small code, high value |
 
-De twee grootste gaten zijn **1** en **2**. Vraag 3 is grotendeels een documentatiekwestie. Vraag 4 is klein in code maar pijnlijk in gebruik.
+The two real gaps are **1** and **2**. Question 3 is largely a documentation problem. Question 4 is small in code but painful in daily use.
 
----
-
-## 1. Probleemstelling
-
-De plugin doet precies wat de README zegt: per project automatisch memory opslaan en teruglezen. Wat de README **niet** zegt, en wat uit de code blijkt:
-
-- Er is geen manier om iets in te stellen behalve via `/mnemosyne` commando's.
-- Er is geen mechanisme dat een memory verouderd verklaart, corrigeert of laat vervallen.
-- Er is geen gedeelde memory; alles is per projectbank gedrployd.
-- Consolidatie bestaat in Mnemosyne maar wordt nooit aangeroepen.
-
-Gevolg in de praktijk: de plugin onthoudt veel, maar niets van wat hij onthoudt wordt bijgewerkt. Dat is een koelkast, geen geheugen.
+A fifth issue surfaced during research and is now the most important one: **the plugin stores raw conversation turns, not facts.** That single fact shapes most of §4.
 
 ---
 
-## 2. Onderbouwing
+## 1. Problem statement
 
-Metingen staan in `~/projects/opencode-agents/research/2026-10-16-mnemosyne-plugin-memory-lifecycle.md`. Kern:
+The plugin does exactly what its README says: per project, it stores memory automatically and reads it back. What the README does **not** say, and what the code shows:
 
-| Feit | Bron |
+- There is no way to configure anything except through `/mnemosyne` commands.
+- Nothing ever marks a memory as outdated, corrects it, or expires it.
+- There is no shared memory; everything is isolated per project bank.
+- Mnemosyne has a consolidation mechanism that is never invoked.
+
+The practical result: the plugin remembers a great deal, but nothing it remembers is ever updated. That is a refrigerator, not a memory.
+
+---
+
+## 2. Evidence
+
+Measurements are in `~/projects/opencode-agents/research/2026-10-16-mnemosyne-plugin-memory-lifecycle.md`. Core facts:
+
+| Fact | Source |
 |---|---|
-| Geen aanroep van `update`, `invalidate`, `sleep`, `reindex` | `index.js` regel 404-463 |
-| Elke memory: `importance=0.7`, `scope=global`, geen `valid_until` | `memory_worker.py` regel 47-58 |
-| Bank is per project: `opencode_<hash>` | `index.js` regel 56-60 |
-| Projectbank: 186 working, **0 episodic**, 89 embeddings | SQLite-inspectie |
-| `auto_sleep_enabled: true`, maar plugin roept `sleep` nooit | `config.yaml` + broncode |
-| `llm_enabled: false` → geen extractie, geen conflictdetectie | `config.yaml` |
+| No call to `update`, `invalidate`, `sleep` or `reindex` | `index.js` lines 404–463 |
+| Every memory: `importance=0.7`, `scope=global`, no `valid_until` | `memory_worker.py` lines 47–58 |
+| Bank is per project: `opencode_<hash>` | `index.js` lines 56–60 |
+| Project bank: 225 working memories, **0 episodic**, 89 embeddings | SQLite inspection, 16 October |
+| `auto_sleep_enabled: true`, but the plugin never calls `sleep` | `config.yaml` plus source |
+| `llm_enabled: false` → no extraction, no conflict detection | `config.yaml` |
 
-**Niet geverifieerd** (en dus niet als vaststaand te behandelen):
-- of `wm_ttl_hours` daadwerkelijk rijen opruimt;
-- of `config.yaml` of env-vars wint (indirect bewijs zegt env-vars);
-- wat `sleep` oplevert.
+Two further facts were verified while writing §4:
+
+- **Metadata does not survive `recall`.** A memory stored with `metadata={"perishability": 0.2}` comes back from `recall()` without a `metadata` key at all. It does survive `get(memory_id)`.
+- **The bank grows on its own.** 186 rows in the morning, 225 in the evening of the same day, all with `source: opencode`. Write-back is actively running.
+
+**Explicitly not verified**, and therefore not to be treated as fact:
+- whether `wm_ttl_hours` actually removes rows;
+- whether `config.yaml` or env vars win (indirect evidence says env vars);
+- what `sleep` actually produces;
+- whether the `memory_worker.py` recall payload is the full row.
 
 ---
 
-## 3. Vraag 1 — Configuratie
+## 3. Question 1 — Configuration
 
-### Probleem
-De plugin kent drie configuratiebronnen die niet met elkaar kunnen praten: `projects.json` (runtime-state, door de plugin geschreven), env-vars (geïnjecteerd, per backend), en Mnemosyne's eigen `config.yaml` (die de plugin niet leest). Alles wat je wilt instellen moet je met de hand in `projects.json` zetten, en de gebruiker weet niet dat dat bestand bestaat.
+### Problem
+The plugin has three configuration sources that cannot talk to each other: `projects.json` (runtime state, written by the plugin), env vars (injected per backend), and Mnemosyne's own `config.yaml` (which the plugin never reads). Everything the user wants to set has to be edited into `projects.json` by hand, and most users do not know that file exists.
 
-Extra pijn: configuratie en runtime-state liggen in hetzelfde bestand. Een kapotte `projects.json` kan daardoor je instellingen overschrijven.
+Extra pain: configuration and runtime state live in the same file. A corrupt `projects.json` can therefore overwrite your settings.
 
-### Opties
+### Options considered
 
-**A. Niets doen.** Huidige situatie. `/mnemosyne` is de enige bediening.
-Kosten: 0. Nadeel: je plugin is niet bruikbaar zonder de commando's te kennen; user-aliases voor je eigen voorkeuren bestaan niet.
+**A. Change nothing.** Current situation.
+**B. `mnemosyne` block in `opencode.jsonc`.** Global and per project.
+**C. Own `mnemosyne.json` in the storage tree.** A third location next to OpenCode's own config.
+**D. Configuration via `/mnemosyne set`.** Not inspectable, not reviewable in git.
 
-**B. `mnemosyne`-blok in `opencode.jsonc`.** Globaal in `~/.config/opencode/opencode.jsonc`, per project in de lokale `opencode.jsonc`.
+### Decision D1 — option B
 ```jsonc
 "mnemosyne": {
   "backend": "mnemosyne-file",
@@ -75,307 +85,252 @@ Kosten: 0. Nadeel: je plugin is niet bruikbaar zonder de commando's te kennen; u
   "globalBank": true
 }
 ```
-Kosten: ~1 dag. Voordelen: conventioneel, per project overschrijfbaar, geen nieuw bestandsformaat. Nadeel: plugin moet config-resolutie bouwen (global → project → state).
-
-**C. Eigen `mnemosyne.json` in de OpenCode storage tree.**
-Kosten: ~1 dag, zelfde resolutiewerk als B. Nadeel: derde plek naast OpenCode's eigen config, dus minder voorspelbaar voor een gebruiker.
-
-**D. Config via `/mnemosyne set`.**
-Kosten: klein. Nadeel: niet inspecteerbaar, niet te reviewen in git, niet deelbaar per project.
-
-### Advies
-**B**, plus een harde scheiding: `opencode.jsonc` = wat je wilt; `projects.json` = wat er gebeurd is. Concreet: bij startup neemt de plugin de **config** uit `opencode.jsonc` en neemt hij uit `projects.json` alleen `enabled`, `lastError` en `updatedAt` over. Als `opencode.jsonc` een `mnemosyne`-blok heeft wint dat; anders valt hij terug op de huidige state.
+With a hard separation: `opencode.jsonc` is what the user wants; `projects.json` is what happened. On startup the plugin takes **configuration** from `opencode.jsonc` and takes only `enabled`, `lastError` and `updatedAt` from `projects.json`. If an `opencode.jsonc` has a `mnemosyne` block, that wins; otherwise the current state is the fallback.
 
 ---
 
-## 4. Vraag 2 — Staleness en up-to-date houden
+## 4. Question 2 — Staleness
 
-### Probleem
-Elke opgeslagen regel is eeuwig geldig. Als je in mei iets veranderde en dat vandaag herhaalt, staan er twee concurrerende memories. De ranking (0,5 vector + 0,3 FTS + 0,2 importance + recency) beslist dan wie wint — niet de waarheid. Bij vier injecties per prompt is het aannemelijk dat een oude regel de nieuwe overstemt.
+### Problem
+Every stored row is permanently valid. If a value changed in May and you repeat the new value today, both rows exist, and ranking decides which one the model sees rather than which one is true. With four memories injected per prompt, an old row can plausibly outrank a new one.
 
-Mnemosyne levert de middelen, wij gebruiken er geen van:
+Mnemosyne ships the machinery. The plugin uses none of it:
 
-| Mechanisme | Status in onze plugin |
+| Mechanism | Status in our plugin |
 |---|---|
-| `sleep` (consolidatie working → episodic) | nooit aangeroepen |
-| `valid_until` per memory | nooit gezet |
-| `invalidate` / `superseded_by` | nooit gebruikt |
-| `wm_ttl_hours` | niet aangestuurd, werking onbekend |
-| conflict-detectie via LLM | uit, `llm_enabled: false` |
+| `sleep` (consolidation, working → episodic) | never invoked |
+| `valid_until` per memory | never set |
+| `invalidate` / `superseded_by` | never used |
+| `wm_ttl_hours` | not set by us; behaviour unknown |
+| conflict detection via LLM | off, `llm_enabled: false` |
 
-### Opties
+### The root problem: the memory unit is wrong
 
-**A. Niets doen.** ledig opslagbewaarder.
-Kosten: 0. Nadeel: het probleem hierboven.
+Per-type decay assumes a memory **is a fact**. It is not. The plugin stores a raw conversation turn. A single stored turn can contain "the deploy runs on port 8080" and "answer me in Dutch" side by side. Assigning a type to such a block is not meaningful, which is why the original specification of decay was not implementable.
 
-**B. ~~Alleen `sleep` aansluiten.~~ — ingetrokken** (16-10-2026, zie correctie hieronder). Een automatische trigger voor consolidatie is niet aangenomen: zie §11.2. `sleep` is nu een expliciet commando.
+### Decision D6 — corrections first, decay second
 
-**C. ~~`sleep` + recency-weging in de injectie.~~ — ingetrokken** (16-10-2026). Recency-weging is één penalty voor alles; vervangen door optie E (per-type vervalbaarheid) in §6.
+At write-back time the plugin already knows which memories it injected into the system context for that session: `recallBySession` holds them. That is four candidates, not 225.
 
-**D. Volledig: `valid_until` + `invalidate` bij tegenspraak.**
-Kosten: 1-2 weken, plus het ontwerpbesluit over tegenspraakherkenning (LLM aan of uit). Zie het blokkadebesluit B4 in §12.
+So: when a new turn contradicts one of the four injected memories, invalidate that one. Narrow, tractable, and it uses infrastructure that already exists. Decay then becomes preventive rather than corrective, and only afterwards is it worth building.
 
-### Het ontwerpbesluit dat C/D blokkeert
-Tegenspraak herkennen is een LLM-stap. Met `llm_enabled: false` kan het alleen heuristisch (dezelfde sleutel, verschillende inhoud), en dat is zwak.
+### Decision D3 — per-type decay, after the correction path
 
-- **LLM aan**: goede conflictdetectie, maar netwerkafhankelijkheid in de write-back. Je had die afhankelijkheid juist niet willen.
-- **LLM uit, heuristisch**: geen extra afhankelijkheid, maar fout-positieven markeren goede memories als verouderd.
+Two decisions that were open at the start of this round:
 
-### ⚠ Correctie na literatuuronderzoek (16 oktober 2026)
+- **How is the type determined?** Not now. First the correction path. Afterwards: only short declarative turns get classified; long turns get no decay. LLM classification is excluded (network dependency in the write path). Pattern matching over raw turns is untestable.
+- **Where does the coefficient live?** In `metadata`, because it survives `get()`. An own table is months of work for a value read four times per prompt. Cost: four extra SQLite point reads per prompt.
+- **What about the 225 existing memories?** They are not discarded. They are real content, not a test fixture, and throwing them away is not an upgrade. They stay in their project bank.
 
-Mijn eerdere advies "**C nu, D later**" was te stellig en wordt ingetrokken. Zie §11.
+### The design decision still deferred
 
-arXiv **2605.12978** ("Useful Memories Become Faulty When Continuously Updated by LLMs") laat zien dat continue consolidatie het nut eerst laat stijgen en daarna laat degraderen, tot onder de no-memory-baseline; consolideren uit ground truth faalt bij 54% van eerder opgeloste ARC-AGI-problemen, en een episodisch-only controle blijft concurrerend. Agents die ruwe episodes bewaren verdubbelen hun accuracy tegenover geforceerde consolidatie.
+Recognising a contradiction is an LLM step.
 
-Twee wijzigingen:
-1. **B vervalt als default.** `sleep` wordt geen automatische stap in de write-back, maar een expliciet commando dat je zelf kiest. `episodic_memory = 0` is dan geen defect maar een toestand.
-2. **C vervalt als oplossing voor staleness.** Recency-weging is één penalty voor alles. arXiv **2608.04746** (ScrubJay-MEM) pleit voor **per-memory, type-geconditioneerde vervalbaarheid** — een `π_i` per memory op basis van contenttype — en toont dat een ablatie van die decay de GenGap met 5,7× collapseert. Dat is een andere, grotere ingreep dan een recency-penalty.
+- **LLM on**: good conflict detection, but a network dependency in the write path, which was exactly what this plugin was built to avoid.
+- **LLM off, heuristic**: no extra dependency, but false positives mark good memories as outdated.
 
----
-
-## 5. Vraag 3 — working_memory, episodic_memory, file versus embedded
-
-### Probleem
-Dit is geen defect, maar een kennislek: de README legt de twee backends uit alsof het twee soorten geheugen zijn. Dat is misleidend.
-
-Feiten:
-- Beide backends gebruiken **dezelfde tabellen** en dezelfde `recall`.
-- File = FTS5 + importance + recency. Embedded = idem plus dense vectors (50% van de ranking).
-- In de projectbank: 186 working, 0 episodic. De episodic-laag is leeg. Of dat een defect is, is nadrukkelijk **geen** defect: `sleep` draait nooit, en volgens §11.2 is episodisch bewaren de veiligere toestand.
-- `memory_embeddings`: 89. Die embeddings bestaan ook in een file-bank als eerder embedded gedraaid heeft — embeddings zijn per opgeslagen rij, niet per backend-keuze.
-
-De echte tiers: `working_memory` (ruwe turns) → `episodic_memory` (samengevat door `sleep`) → `memories`/`facts` (geëxtraheerd, duurzaam).
-
-### Opties
-
-**A. Alleen documenteren.** Tiers en deJuiste backend-beschrijving in de README.
-Kosten: ~1 uur. lost het lek, niet het probleem.
-
-**B. Documenteren plus tiers zichtbaar maken.** `/mnemosyne stats` toont per tier wat erin zit.
-Kosten: ~2 uur. Dan zie je in één oogopslag waaróm een recall iets vond of niets.
-
-### Advies
-**B**. Kleine wijziging: je ziet per tier wat erin zit. De tier-telling is een meetpunt voor D3, niet voor `sleep` — die draait alleen als je er zelf om vraagt.
+The correction path (D6) deliberately does **not** resolve this: it narrows the candidate set to four, it does not need to judge them automatically. Automatic judging stays deferred.
 
 ---
 
-## 6. Vraag 4 — Globale memory, en Mnemosyne versus Hindsight
+## 5. Question 3 — working_memory, episodic_memory, file versus embedded
 
-### Het ontwerpgat
-`scope="global"` klinkt als cross-project. Het is dat niet: het betekent global binnen één bank. Elke project krijgt zijn eigen bank, dus je persoonlijke voorkeuren — taal, antwoordstijl, commit-conventies, "noem me Chris" — moet je per project opnieuw in de projectbank krijgen.
+Not a defect but a knowledge gap: the README describes the two backends as if they were two kinds of memory. That is misleading and it misled me too.
 
-Dat is een echte lacune, geen cosmetiek.
+Facts:
+- Both backends use the **same tables** and the same `recall`.
+- File = FTS5 + importance + recency. Embedded = the same plus dense vectors, which take 50% of the ranking.
+- In the project bank: 225 working, 0 episodic. The episodic layer is empty. Whether that is a defect is a separate question, and the answer is **no**: `sleep` never runs, and per §11.2 episodic-only retention is the safer state.
+- `memory_embeddings`: 89. Embeddings are per stored row, not a property of the backend choice.
 
-### Opties voor global memory
+The real tiers: `working_memory` (raw turns) → `episodic_memory` (summarised by `sleep`) → `memories`/`facts` (extracted, durable).
 
-**A. Niets doen.** Per project uitsluitend.
-Kosten: 0. Nadeel: het probleem hierboven.
+### Decision D2 — document, and make tiers visible
 
-**B. Gedeelde bank `opencode_global`, naast de projectbank.**
-Bij recall: twee instanties (projectbank + globalbank), resultaten mergen, global dempen zodat project altijd wint. Bij write-back: alleen naar de projectbank, tenzij het een `global`-markering heeft.
-Kosten: ~4 uur. Werkt, maar de merge- en dempingslogica moet je ontwerpen en testen.
+`/mnemosyne stats` shows what is in each tier. Small change, and it makes question 2 observable: the tier counts are the measuring point for D3, not for `sleep`.
 
-**C. B + een `/mnemosyne global on`-schakelaar** om te kiezen of global meeleest.
-Kosten: ~5 uur. Voordeel: projecten waar global irrelevant is kunnen het uitzetten.
+### Decision — `sleep` becomes an explicit command
 
-**D. Persona-laag.** Mnemosyne heeft `persona_enabled: true` en een persona-tier.
-Kosten: n.v.t. — **deze optie is afgevallen**, zie §11.1. De laag is niet bruikbaar in 3.15.1 en het ontwerppatroon wordt in de literatuur bekritiseerd.
+See §11.2. `sleep` is never automatic. `episodic_memory = 0` is a legitimate state, not a bug to report.
 
-**E. Per-type vervalbaarheid** (uit het literatuuronderzoek, niet oorspronkelijk mijn idee).
-Elke memory krijgt een houdbaarheidscoefficient op basis van contenttype: een adres veroudert snel, een taalvoorkeur vrijwel nooit. Bij injectie weegt een memory met lage houdbaarheid zwaarder naar voren als hij níét verouderd is.
-Kosten: ~3 dagen. Onderbouwd door 2608.04746, wel scoped tot temporal reasoning over perishable facts. Lost het echte probleem (§4) beter aan dan C.
+---
+
+## 6. Question 4 — Global memory, and Mnemosyne versus Hindsight
+
+### The design gap
+`scope="global"` sounds cross-project. It is not: it means global **within one bank**. Every project gets its own bank, so personal preferences — language, answer style, commit conventions — must be repeated in each project's bank. That is a real gap, not cosmetics.
+
+### Options considered
+
+**A. Change nothing.**
+**B. Shared bank `opencode_global` next to the project bank.**
+**C. B plus a `/mnemosyne global on` switch.**
+**D. Persona tier.** Rejected, see §11.1.
+**E. Per-type decay.** Discussed in §4.
+
+### Decision D4 + D7 — shared bank, driven by a mode switch
+
+Recall consults two banks: the project bank and `opencode_global`. The project bank always wins; global results are damped.
+
+Write-back follows a **mode**, not a per-message marker:
+
+```
+/mnemosyne global on      everything you type from now on goes to the global bank
+/mnemosyne global off     back to the project bank
+```
+
+Why a mode and not the other two options:
+
+- **Not per-message marking.** The plugin promises automatic memory. A marker you have to type makes that promise untrue.
+- **Not automatic detection.** The plugin would have to classify raw turns, which §4 shows is not meaningful.
+
+The honest cost of a mode: everything typed while it is on goes to the global bank, including project details. It is reversible with the same command, and it costs zero effort per message.
 
 ### Mnemosyne versus Hindsight
 
-Correctie vooraf, want die is belangrijk: de 422 Hindsight-documenten waren ruwe gesprekskoppen met nul geëxtraheerde feiten. Dat is **geen** bewijs dat Hindsight slecht is. Wij hadden het zelf zo geconfigureerd (`retain_extraction_mode: "chunks"`, observaties uit). Het is een configuratie-observatie, geen productoordeel. Ik had dat eerder te sterk geformuleerd.
+Correction first, because it matters: the 422 Hindsight documents were raw conversation transcripts with zero extracted facts. That is **not** evidence that Hindsight is poor. We configured it that way ourselves (`retain_extraction_mode: "chunks"`, observations disabled). It is a configuration observation, not a product verdict. I had stated it too strongly earlier.
 
-Wat ik daadwerkelijk heb waargenomen:
+What was actually observed:
 
 | | Mnemosyne | Hindsight |
 |---|---|---|
-| Vorm | lokale SQLite, optioneel Ollama | HTTP-dienst in een container |
-| Kosten per recall | ~0,08 s, geen euro | netwerk + container + 3,5 GB volume |
-| Lifecycle-machines | `sleep`, tiers, TTL, persona | niet door ons gebruikt |
-| Delen tussen agents | via export/sync | inherent, één gedeelde dienst |
-| Extra onderhoud | geen | container, volume, backup, versies |
+| Form | local SQLite, optional Ollama | HTTP service in a container |
+| Cost per recall | ~0.08 s, no money | network + container + 3.5 GB volume |
+| Lifecycle machinery | `sleep`, tiers, TTL, persona | not used by us |
+| Sharing between agents | via export/sync | inherent, one shared service |
+| Extra maintenance | none | container, volume, backups, versions |
 
-**Advies: blijf bij Mnemosyne.** Niet omdat Hindsight minderwaardig is, maar omdat de drie klachten die je hier hebt — recallscore, staleness, global memory — alle drie al in Mnemosyne bestaan en alleen nog niet zijn aangesloten. Van vendor wisselen koopt die drie niet; het koopt ze opnieuw, in een ander formaat, zonder de drie.
+**Recommendation: stay with Mnemosyne.** Not because Hindsight is inferior, but because the three complaints at hand — recall quality, staleness, global memory — all already exist inside Mnemosyne and are simply not wired up. Switching vendors does not buy them; it buys them again, in a different shape, without the three.
 
-Mijn mening over de vraag "is dit de juiste vendor": het verschil zit niet in de database, het zit in of iemand de lifecycle aansluit. Wij hebben dat niet gedaan. Dat is ons werk, niet hun product.
+My answer to "is this the right vendor": the difference is not the database, it is whether someone wires up the lifecycle. We have not done that. That is our work, not their product.
 
 ---
 
-## 7. Voorgestelde volgorde
+## 7. Implementation order
 
-| # | Wat | Afhankelijkheid | Grove inschatting |
+| # | What | Depends on | Estimate |
 |---|---|---|---|
-| 1 | Scheid config (`opencode.jsonc`) van state (`projects.json`) | geen | 1 dag |
-| 2 | Gedeelde global bank + schakelaar | geen | 0,5 dag |
-| 3 | `/mnemosyne stats` per tier | geen | 2 uur |
-| 4 | `/mnemosyne sleep` als **expliciet** commando (geen auto-trigger) | 3 | 2 uur |
-| 5 | Per-type vervalbaarheid (optie E) | 3 | 3 dagen |
-| 6 | Tegenspraak-invalidate | 5, plus besluit over LLM | 1-2 weken |
+| 1 | Separate config (`opencode.jsonc`) from state (`projects.json`) | — | 1 day |
+| 2 | Shared global bank plus mode switch | 1 | 0.5 day |
+| 3 | `/mnemosyne stats` per tier | — | 2 h |
+| 4 | `/mnemosyne sleep` as an **explicit** command, no auto-trigger | 3 | 2 h |
+| 5 | Correction path: invalidate a contradicted injected memory | 3 | 1 day |
+| 6 | Per-type decay (D3) | 5 | 3 days |
+| 7 | Automatic contradiction detection | 6, plus the LLM decision | deferred |
 
-Onderdelen 1, 2 en 3 zijn in principe los te bouwen, maar niet in willekeurige volgorde: onderdeel 1 voegt `globalBank` en `recallLimit` aan de config toe, onderdeel 2 gebruikt `globalBank`, onderdeel 3 toont de uitkomst van 2 in `/mnemosyne stats`. De volgorde 1 → 2 → 3 is dus reëel. 4 en 5 willen 3 eerst, zodat het effect meetbaar is. 6 is bewust uitgesteld tot de keuze in §12 B4.
+Items 1, 2 and 3 can be built separately but not in arbitrary order: item 1 adds `globalBank` and `recallLimit` to the config, item 2 uses `globalBank`, item 3 shows the outcome of item 2 in `/mnemosyne stats`. The order 1 → 2 → 3 is therefore real. Items 4, 5 and 6 all want item 3 first so their effect is measurable. Item 7 is deliberately deferred.
 
-### Documentatie als leverbaar
+**Item 5 changed the plan.** Decay used to be item 5. It is now item 6, behind the correction path, because decay without correction leaves the actively wrong memory in place, merely ranked lower.
 
-Naast de code hoort één gebruikersdocument: **`docs/working-with-memory.md`**.
+### Documentation as a deliverable
 
-Doelgroep: een ontwikkelaar die OpenCode en code kan lezen, maar nog nooit met agent
-memory heeft gewerkt. Omvang: compact, één tot twee pagina's. Inhoud: wat de plugin doet,
-vijf regels voor het gebruik, wat hij bewust níét doet, en kort waarom hij zo werkt.
+One user-facing document: **`docs/working-with-memory.md`**.
 
-De README linkt ernaar met een **relatieve markdown-link**, niet met een symlink. Een
-symlink met absoluut pad breekt zodra het pakket op npm staat, en een symlink naar een
-pad buiten de repository werkt dan sowieso niet voor andere gebruikers.
+Audience: a developer who can read OpenCode and code, but has never worked with agent memory. Length: compact, one to two pages. Content: what the plugin does, five rules for working with it, what it deliberately does not do, and briefly why it is built this way.
 
-Dat document beschrijft uitsluitend wat **gedrployd** is. Geplande features worden daar
-niet als bestaand gepresenteerd; waar een regel verandert door D1–D4 moet het document
-mee.
+The README links to it with a **relative markdown link**, not a symlink. A symlink with an absolute path breaks once the package is on npm, and a symlink to a path outside the repository does not work for other users at all.
+
+That document describes only what is **shipped**. Planned features are not presented as existing, and where a rule changes through D1–D7 the document must change with it.
 
 ---
 
-## 8. Open beslissingen
+## 8. Decisions
 
-Deze vier moet jij kiezen. Ik bouw niets tot ze beantwoord zijn.
-
-| # | Vraag | Besluit | Status |
+| # | Question | Decision | Status |
 |---|---|---|---|
-| D1 | Waar komt configuratie? | `mnemosyne`-blok in `opencode.jsonc`, globaal + per project | **besloten 16-10-2026** |
-| D2 | `sleep`: in de write-back of als expliciet commando? | **Expliciet commando**, nooit automatisch | **besloten 16-10-2026** |
-| D3 | Per-type vervalbaarheid bouwen of niet? | **Bouwen** (optie E, ~3 dagen) | **besloten 16-10-2026** |
-| D4 | Global memory: altijd aan of schakelbaar? | **Schakelbaar per project, default aan** | **besloten 16-10-2026** |
-| D5 | Is de persona-laag beter dan een handmatige bank? | **Nee** — §11.1 | **besloten 16-10-2026** |
+| D1 | Where does configuration live? | `mnemosyne` block in `opencode.jsonc`, global plus per project | decided 16-10-2026 |
+| D2 | `sleep`: automatic or explicit? | **Explicit command**, never automatic | decided 16-10-2026 |
+| D3 | Build per-type decay? | **Build**, after the correction path | decided 16-10-2026 |
+| D4 | Global memory always on or switchable? | **Switchable per project**, default on | decided 16-10-2026 |
+| D5 | Is the persona tier better than a hand-built bank? | **No** — §11.1 | decided 16-10-2026 |
+| D6 | Corrections or decay first? | **Corrections first** | decided 16-10-2026 |
+| D7 | How is something routed to the global bank? | **A mode switch**, not per-message marking and not automatic detection | decided 16-10-2026 |
+| D8 | Language of this document | **Translate in place**; the Dutch original stays in the private archive | decided 16-10-2026 |
 
-Alle openstaande beslissingen zijn genomen. De persona-vraag is beantwoord: nee.
+### Consequences of the decisions
 
-### Consequenties van de besluiten
-
-- **D1** betekent dat `projects.json` geen config meer bevat. Wat de gebruiker wil komt uit `opencode.jsonc`; wat er gebeurd is blijft in `projects.json` (`enabled`, `lastError`, `updatedAt`).
-- **D2** betekent dat `episodic_memory = 0` geen bug is en niet meer als zodanig gerapporteerd hoeft te worden.
-- **D3** is de grootste ingreep in de volgorde. Het is bewust vóór item 6 (tegenspraak-invalidate) gepland, omdat het meeste van dat probleem oplost zonder LLM.
-- **D4** betekent dat recall twee banken raadplegt. De projectbank wint altijd; global wordt gedempt.
-
----
-
-## 9. Wat níét in scope is
-
-- Vendorkeuze. Die staat in §6 en het advies is: geen wijziging.
-- Migratie van de 422 Hindsight-documenten. Blijft testmateriaal.
-- Benchmarkcampagne tussen backends. De snelheidsmeting in het research-bestand is voldoende voor de keuze.
-- Cross-backend migratie van bestaande memories. Nog niet gevraagd, wel een logisch gevolg van vraag 2.
-
-## 10. Acceptatiecriteria voor dit document
-
-- [x] Persona-vs-global-bank is onderzocht en beslist (§11.1: persona afgevallen)
-- [x] D1 t/m D4 zijn beantwoord (16 oktober 2026)
-- [x] De volgorde in §7 is goedgekeurd, met de correctie uit §11.2
-- [ ] Implementatie van de volgorde in §7, per stuk afzonderlijk geverifieerd
-- [ ] De blokkades in §12 opgelost — **vereist vóór een deepwork-opdracht**
+- **D1** means `projects.json` is no longer configuration. What the user wants comes from `opencode.jsonc`; what happened stays in `projects.json`.
+- **D2** means `episodic_memory = 0` is not a bug and no longer has to be reported as one.
+- **D3** stores the coefficient in `metadata`, which costs four extra point reads per prompt because `recall` drops metadata.
+- **D4 + D7** mean recall touches two banks, and the project bank always wins.
+- **D6** means decay is preventive instead of corrective, and that the expensive part of contradiction detection is narrowed to four candidates per prompt rather than postponed entirely.
 
 ---
 
-## 11. Onderzoeksresultaten 16 oktober 2026
+## 9. Out of scope
 
-Onderbouwing in `~/projects/opencode-agents/research/2026-10-16-persona-laag-en-agent-memory-literatuur.md`.
+- Vendor choice. See §6; the recommendation is no change.
+- Migrating the 422 Hindsight documents. They remain test material.
+- A benchmark campaign between backends. The latency measurement in the research note is sufficient for the choice.
+- Cross-backend migration of existing memories.
+- Automatic contradiction detection, pending the LLM decision in §4.
 
-### 11.1 Persona-laag: afgevallen
+## 10. Acceptance criteria for this document
 
-Twee onafhankelijke redenen.
+- [x] Persona versus hand-built global bank researched and decided (§11.1)
+- [x] D1 through D4 answered (16 October 2026)
+- [x] Implementation order approved, with the correction inserted before decay
+- [x] Document translated to English
+- [ ] Implementation of §7 completed, each item verified separately
+- [ ] `docs/working-with-memory.md` updated for every behaviour change from D1–D7
 
-**Reden 1 — de code is dood in 3.15.1.** `PersonaExtractor`, `PersonaTriggers` en `write_persona_file` hebben nul callers binnen het package. De SDK-klasse `Mnemosyne` heeft geen enkele persona-methode. Het enige dat `persona.md` leest is een Hermes-integratie, en onze OpenCode-plugin injecteert het niet eens.
+---
 
-Bovendien een ontwerpconflict los van de dode code: de bron (`memoria_persona`) is per bank, het doelbestand is globaal (`~/.hermes/memory/persona.md`). Bij meerdere projecten overschrijft elke projectbank hetzelfde bestand.
+## 11. Research results, 16 October 2026
 
-**Reden 2 — het patroon wordt in de literatuur bekritiseerd.** arXiv **2608.01708** (PGMem): bestaande systemen *"store personas as flat profiles detached from the events that justify them"*, wat de **memory-persona validity gap** veroorzaakt. Hun oplossing koppelt persona-noden aan events via typed provenance- en evidence-edges. Onze persona-aanpak is precies het bekritiseerde patroon.
+Supporting detail in `~/projects/opencode-agents/research/2026-10-16-persona-laag-en-agent-memory-literatuur.md` (Dutch, internal).
 
-**Gevolg:** optie D is geschrapt. Global memory gaat via optie B (gedeelde bank).
+### 11.1 Persona tier: rejected
 
-### 11.2 Consolidatie: mijn advies was te stellig, ingetrokken
+Two independent reasons.
+
+**Reason 1 — the code is dead in 3.15.1.** `PersonaExtractor`, `PersonaTriggers` and `write_persona_file` have no callers inside the package. The `Mnemosyne` SDK class has no persona method at all. The only thing that reads `persona.md` is a Hermes integration, and our OpenCode plugin does not even inject it.
+
+There is also a design conflict independent of the dead code: the source (`memoria_persona`) is per bank, the target file is global (`~/.hermes/memory/persona.md`). With multiple projects every project bank overwrites the same file.
+
+**Reason 2 — the pattern is criticised in the literature.** arXiv **2608.01708** (PGMem): existing systems *"store personas as flat profiles detached from the events that justify them"*, which causes the **memory-persona validity gap**. Their fix connects persona nodes to events through typed provenance and evidence edges. Mnemosyne's persona approach is exactly the criticised pattern.
+
+**Consequence:** option D is struck. Global memory uses a shared bank (D4, D7).
+
+### 11.2 Consolidation: my earlier advice was too strong, withdrawn
 
 arXiv **2605.12978** ("Useful Memories Become Faulty When Continuously Updated by LLMs"):
 
-- consolidatie: nut stijgt eerst, daalt daarna tot onder de no-memory-baseline;
-- consolideren uit ground-truth oplossingen faalt bij 54% van eerder opgeloste ARC-AGI-problemen;
-- episodisch-only controle blijft concurrerend met de geteste consolidators;
-- agents die ruwe episodes bewaren verdubbelen hun accuracy tegenover geforceerde consolidatie.
+- consolidation raises usefulness first, then degrades it below a no-memory baseline;
+- consolidating from ground-truth solutions fails on 54% of ARC-AGI problems the model had previously solved without memory;
+- an episodic-only control stays competitive with the consolidators tested;
+- agents that retain raw episodes double their accuracy against forced consolidation.
 
-**Gevolg:** `episodic_memory = 0` is geen defect maar een mogelijk verstandige toestand. `sleep` wordt een expliciet commando, niet een stap in de write-back. Dit haalt mijn eerdere "C nu, D later" eruit.
+**Consequences:** `episodic_memory = 0` is a defensible state rather than a defect. `sleep` becomes an explicit command instead of a step in the write path. This withdraws my earlier "do C now, D later" recommendation, and it is why decay became a separate, later decision (D3) instead of the immediate one.
 
-### 11.3 Wat wél onderbouwd is
+### 11.3 What is substantiated
 
-| Onderwerp | Bevinding | Ons |
+| Topic | Finding | Ours |
 |---|---|---|
-| Staleness | **2608.04746** (ScrubJay-MEM): bestaande architecturen behandelen alle memories even persistent en "systematically contaminate retrieved context with outdated facts". Oplossing is per-memory, type-geconditioneerde vervalbaarheid (`π_i`), niet één recency-penalty. Ablatie collapseert de GenGap met 5,7×. | wordt optie E |
-| Global memory | **2601.21545** (ShardMemo): harde admissibiliteit (scope) moet vóór relevantie-ranking komen, anders verspilt retrieval budget. +6,8 F1 op LoCoMo. | bevestigt optie B |
-| File vs embedded | **2602.23368**: agentic keyword search haat >90% van de RAG-metrics zonder vector database. Ons eigen: 0,083 s per embedding. | file blijft default |
+| Staleness | **2608.04746** (ScrubJay-MEM): existing architectures treat all memories as equally persistent and *"systematically contaminate retrieved context with outdated facts"*. The fix is per-memory, type-conditioned perishability (`π_i`), not a single recency penalty. Ablating the decay collapses the GenGap by 5.7×. | becomes D3 |
+| Global memory | **2601.21545** (ShardMemo): hard admissibility (scope) must come before relevance ranking, otherwise retrieval budget is wasted. +6.8 F1 on LoCoMo. | confirms D4 |
+| File versus embedded | **2602.23368**: agentic keyword search reaches over 90% of RAG metrics without a vector database. Our own measurement: 0.083 s per embedding. | file stays the default |
 
-### 11.4 naamverwarring, expliciet
+### 11.4 Name collision, stated explicitly
 
-Er bestaat een arXiv-paper "Mnemosyne" (**2510.08601**, *Unsupervised, Human-Inspired Long-Term Memory Architecture for Edge-Based LLMs*, 2025-10-07, health-care-dialogen, edge-devices). Dat is **niet** ons pakket: het onze is van auteur Abdias J, repo `AxDSan/mnemosyne**. De paper is een naamcollisie en geen ruggensteun voor de software die je draait.
+An arXiv paper called "Mnemosyne" exists (**2510.08601**, *Unsupervised, Human-Inspired Long-Term Memory Architecture for Edge-Based LLMs*, 2025-10-07, healthcare dialogues, edge devices). It is **not** our package: ours is by Abdias J, repo `AxDSan/mnemosyne`. The paper is a name collision and is not evidence for the software being run.
 
-Wel gerelateerd: `core/persona.py` in het pakket verwijst naar een "Hy-Memory PersonaTrigger pattern". Hy-Memory heeft een eigen paper (**2610.22196**, 2026-10-15) waarvan de kernclaim is dat de kwaliteit van extern geheugen zit in **de write path** — wat bewaren, hoe representeren, hoe nieuw bewijs bijwerken. Dat is exact ons zwakste punt, en het is een aanwijzing dat de winst in de write path zit, niet in de opslag.
+Related: `core/persona.py` in the package refers to a "Hy-Memory PersonaTrigger pattern". Hy-Memory has its own paper (**2610.22196**, 2026-10-15) whose central claim is that the quality of external memory sits in **the write path** — what to retain, how to represent it, how new evidence updates existing state. That is precisely our weakest point, and it points the same way as D6.
+
 ---
 
-## 12. Blokkades vóór implementatie
+## 12. Findings from reviewing this document
 
-Review van 16 oktober 2026 op het eigen document. Zes punten; de eerste twee
-blokkeren een deepwork-opdracht, de overige moeten opgelost of expliciet
-geaccepteerd zijn.
+Six issues found on 16 October 2026. All six are resolved; they are recorded here because a decision document that hides its own corrections is not trustworthy.
 
-### B1 — De statusregel is niet meer waar
+**B1 — the status line was false.** It said "ready for implementation" while items were still undecided. Corrected.
 
-Regel 3 zegt "klaar voor implementatie". Dat klopt niet: `RELEASE-READINESS.md`
-vraagt nog een beslissing die hier staat — bouwen we de PRD-werk vóór of ná de
-release-readiness-testladder — en het werkvlak D3 heeft nog een ontwerpbesluit
-(B2). Zie B2.
+**B2 — D3 was not implementable as specified.** Three design decisions were missing: how the type is determined, where the coefficient is stored, and what happens to existing memories. Resolved in §4; the first remains partly deferred on purpose.
 
-### B2 — D3 is niet implementeerbaar zoals beschreven (blokkerend)
+**B3 — §4 and §5 contradicted each other.** §5 said the empty episodic layer was caused by `sleep` never running; §4 said that is not a defect. Both cannot be true. Options B and C were still listed as live after being withdrawn, and §5 still referred to the effect of a withdrawn option. All corrected.
 
-"Per-type vervalbaarheid" is een besluit, geen specificatie. Er ontbreken drie
-ontwerpbesluiten:
+**B4 — "automatic" versus "the user marks globals".** §6 originally required a `global` marker on write-back, which contradicts the promise of automatic memory. Resolved by D7: a mode switch, so nothing has to be marked per message.
 
-1. **Hoe wordt het type bepaald?** Prompt-pattern, metadata, of een LLM-stap. Een
-   LLM-stap is uitgesloten (zie §4). Pattern-matching is zwak maar gratis.
-2. **Waar wordt `π_i` opgeslagen?** De `remember`-signature heeft geen veld daarvoor:
-   `content, source, importance, metadata, valid_until, scope, extract_entities,
-   extract, veracity, trust_tier`. Dus `π_i` moet in `metadata` of in een eigen
-   tabel. Of metadata de recall overleeft is **niet geverifieerd**.
-3. **Wat doen we met de 186 bestaande memories?** Krijgen ze een π, of laten we ze
-   buiten de weging? Dat maakt migratie van bestaande data wél in scope, terwijl §9
-   cross-backend migratie juist buiten scope plaatst. Tegenspraak binnen dit
-   document.
+**B5 — no gate per item.** The order had estimates but no exit criteria. Now each item names its dependency; the verification per item is an acceptance criterion in §10.
 
-Zonder deze drie uitkomsten is D3 niet uitvoerbaar en niet te reviewen.
-
-### B3 — Tegenstrijdigheden in §4 en §5
-
-- §5 zegt "de episodic-laag is leeg omdat `sleep` nooit draaide". §4 zegt juist dat
-  `episodic_memory = 0` géén defect is. Beide kunnen niet waar zijn.
-- §4 annuleert opties B en C, maar ze staan nog als levende opties in de lijst.
-- §5 Advies verwijst nog naar het effect van B ("zodra `episodic_memory` groeit").
-- §4 verwijst naar "de open vraag hieronder" die niet meer bestaat.
-
-### B4 — "Automatisch" versus "gebruiker markeert globals" (ontwerpbesluit)
-
-§6 optie B zegt: write-back gaat alleen naar de projectbank, "tenzij het een
-`global`-markering heeft". Maar de plugin belooft volledig automatisch geheugen. Een
-markering die de gebruiker zelf moet aanbrengen, maakt de belofte untrue. Er is geen
-besluit genomen over: detecteert de plugin dit zelf, of wordt expliciet markeren een
-uitdrukkelijk onderdeel van het contract?
-
-### B5 — Geen gate per onderdeel in §7
-
-De volgorde heeft tijdsinschattingen maar geen exit criteria. Deepwork heeft per stap
-een verificatiepoort nodig. Zonder die is "klaar" niet aantoonbaar.
-
-### B6 — De onafhankelijkheidsclaim klopt niet
-
-Regel 5 en §7 noemen onderdelen 1, 2 en 3 onafhankelijk. Dat is te sterk:
-
-- onderdeel 1 voegt `globalBank` en `recallLimit` toe aan de config;
-- onderdeel 2 gebruikt precies die `globalBank`;
-- onderdeel 3 toont de uitkomst van onderdeel 2 in `/mnemosyne stats`.
-
-De volgorde 1 → 2 → 3 is dus reëel, ook al is de volgorde 1, 2, 3 ook toegestaan is.
+**B6 — the independence claim was too strong.** Items 1, 2 and 3 were described as independent, but item 1 adds `globalBank`, item 2 uses it, and item 3 displays its result. The order 1 → 2 → 3 is real.

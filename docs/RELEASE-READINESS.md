@@ -20,11 +20,15 @@ preference: an international audience cannot use a Dutch README.
 | `docs/working-with-memory.md` | English | no |
 | CHANGELOG, issue templates | English | no |
 
-**Open, not yet resolved:** `docs/PRD-memory-lifecycle.md` and the research notes
-are still written in Dutch. They do not ship inside the npm tarball — the `files`
-allowlist limits it to five files — so this is not a publishing blocker, but it
-contradicts the intent of "everything in English". Decision needed before the
-repository goes public.
+| `docs/PRD-memory-lifecycle.md` | English (translated 16-10-2026) | no |
+
+**Resolved.** The PRD was translated in place. The Dutch original is preserved in the
+private archive repository `digi4care/mnemosyne-opencode-research-history`, together
+with the pre-publication git history.
+
+The research notes under `~/projects/opencode-agents/research/` remain in the working
+language. They are not in the repository at all, so they are out of scope for this
+policy.
 
 ## Verified packaging blockers
 
