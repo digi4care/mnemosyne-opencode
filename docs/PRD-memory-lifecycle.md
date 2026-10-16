@@ -87,6 +87,8 @@ Extra pain: configuration and runtime state live in the same file. A corrupt `pr
 ```
 With a hard separation: `opencode.jsonc` is what the user wants; `projects.json` is what happened. On startup the plugin takes **configuration** from `opencode.jsonc` and takes only `enabled`, `lastError` and `updatedAt` from `projects.json`. If an `opencode.jsonc` has a `mnemosyne` block, that wins; otherwise the current state is the fallback.
 
+**Do not confuse the two decisions.** `projects.json` does not become OpenCode's config file; it lives inside OpenCode's own data tree and holds runtime state only. Separately, all configuration moves into `opencode.jsonc`. Both statements are true at the same time, and neither replaces the other.
+
 ---
 
 ## 4. Question 2 — Staleness
