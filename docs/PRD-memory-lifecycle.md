@@ -274,6 +274,7 @@ Alle openstaande beslissingen zijn genomen. De persona-vraag is beantwoord: nee.
 - [x] D1 t/m D4 zijn beantwoord (16 oktober 2026)
 - [x] De volgorde in §7 is goedgekeurd, met de correctie uit §11.2
 - [ ] Implementatie van de volgorde in §7, per stuk afzonderlijk geverifieerd
+- [ ] De blokkades in §12 opgelost — **vereist vóór een deepwork-opdracht**
 
 ---
 
@@ -317,3 +318,66 @@ arXiv **2605.12978** ("Useful Memories Become Faulty When Continuously Updated b
 Er bestaat een arXiv-paper "Mnemosyne" (**2510.08601**, *Unsupervised, Human-Inspired Long-Term Memory Architecture for Edge-Based LLMs*, 2025-10-07, health-care-dialogen, edge-devices). Dat is **niet** ons pakket: het onze is van auteur Abdias J, repo `AxDSan/mnemosyne**. De paper is een naamcollisie en geen ruggensteun voor de software die je draait.
 
 Wel gerelateerd: `core/persona.py` in het pakket verwijst naar een "Hy-Memory PersonaTrigger pattern". Hy-Memory heeft een eigen paper (**2610.22196**, 2026-10-15) waarvan de kernclaim is dat de kwaliteit van extern geheugen zit in **de write path** — wat bewaren, hoe representeren, hoe nieuw bewijs bijwerken. Dat is exact ons zwakste punt, en het is een aanwijzing dat de winst in de write path zit, niet in de opslag.
+---
+
+## 12. Blokkades vóór implementatie
+
+Review van 16 oktober 2026 op het eigen document. Zes punten; de eerste twee
+blokkeren een deepwork-opdracht, de overige moeten opgelost of expliciet
+geaccepteerd zijn.
+
+### B1 — De statusregel is niet meer waar
+
+Regel 3 zegt "klaar voor implementatie". Dat klopt niet: `RELEASE-READINESS.md`
+vraagt nog een beslissing die hier staat — bouwen we de PRD-werk vóór of ná de
+release-readiness-testladder — en het werkvlak D3 heeft nog een ontwerpbesluit
+(B2). Zie B2.
+
+### B2 — D3 is niet implementeerbaar zoals beschreven (blokkerend)
+
+"Per-type vervalbaarheid" is een besluit, geen specificatie. Er ontbreken drie
+ontwerpbesluiten:
+
+1. **Hoe wordt het type bepaald?** Prompt-pattern, metadata, of een LLM-stap. Een
+   LLM-stap is uitgesloten (zie §4). Pattern-matching is zwak maar gratis.
+2. **Waar wordt `π_i` opgeslagen?** De `remember`-signature heeft geen veld daarvoor:
+   `content, source, importance, metadata, valid_until, scope, extract_entities,
+   extract, veracity, trust_tier`. Dus `π_i` moet in `metadata` of in een eigen
+   tabel. Of metadata de recall overleeft is **niet geverifieerd**.
+3. **Wat doen we met de 186 bestaande memories?** Krijgen ze een π, of laten we ze
+   buiten de weging? Dat maakt migratie van bestaande data wél in scope, terwijl §9
+   cross-backend migratie juist buiten scope plaatst. Tegenspraak binnen dit
+   document.
+
+Zonder deze drie uitkomsten is D3 niet uitvoerbaar en niet te reviewen.
+
+### B3 — Tegenstrijdigheden in §4 en §5
+
+- §5 zegt "de episodic-laag is leeg omdat `sleep` nooit draaide". §4 zegt juist dat
+  `episodic_memory = 0` géén defect is. Beide kunnen niet waar zijn.
+- §4 annuleert opties B en C, maar ze staan nog als levende opties in de lijst.
+- §5 Advies verwijst nog naar het effect van B ("zodra `episodic_memory` groeit").
+- §4 verwijst naar "de open vraag hieronder" die niet meer bestaat.
+
+### B4 — "Automatisch" versus "gebruiker markeert globals" (ontwerpbesluit)
+
+§6 optie B zegt: write-back gaat alleen naar de projectbank, "tenzij het een
+`global`-markering heeft". Maar de plugin belooft volledig automatisch geheugen. Een
+markering die de gebruiker zelf moet aanbrengen, maakt de belofte untrue. Er is geen
+besluit genomen over: detecteert de plugin dit zelf, of wordt expliciet markeren een
+uitdrukkelijk onderdeel van het contract?
+
+### B5 — Geen gate per onderdeel in §7
+
+De volgorde heeft tijdsinschattingen maar geen exit criteria. Deepwork heeft per stap
+een verificatiepoort nodig. Zonder die is "klaar" niet aantoonbaar.
+
+### B6 — De onafhankelijkheidsclaim klopt niet
+
+Regel 5 en §7 noemen onderdelen 1, 2 en 3 onafhankelijk. Dat is te sterk:
+
+- onderdeel 1 voegt `globalBank` en `recallLimit` toe aan de config;
+- onderdeel 2 gebruikt precies die `globalBank`;
+- onderdeel 3 toont de uitkomst van onderdeel 2 in `/mnemosyne stats`.
+
+De volgorde 1 → 2 → 3 is dus reëel, ook al is de volgorde 1, 2, 3 ook toegestaan is.
