@@ -5,12 +5,39 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 MODEL="${OPENCODE_MODEL:-opencode/space-bunny-free}"
 GLOBAL_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.jsonc"
-GLOBAL_BEFORE="$(sha256sum "$GLOBAL_CONFIG" | cut -d' ' -f1)"
-# Since D1 the plugin writes configuration to the *project* config, not the global
-# one. The smoke runs in the repository root, so /mnemosyne on would otherwise edit
-# this repository's own opencode.jsonc. Snapshot it and restore it afterwards.
 PROJECT_CONFIG="$ROOT/opencode.jsonc"
-PROJECT_BEFORE="$(sha256sum "$PROJECT_CONFIG" | cut -d' ' -f1)"
+GLOBAL_BEFORE="$(sha256sum "$GLOBAL_CONFIG" | cut -d' ' -f1)"
+# Refuse to run when the project config already contains user changes. The smoke
+# itself edits this file, so keep an exact byte-for-byte backup and restore it on
+# every exit path (including errors and catchable signals).
+if ! git -C "$ROOT" diff --quiet -- opencode.jsonc ||
+   ! git -C "$ROOT" diff --cached --quiet -- opencode.jsonc ||
+   { [[ -e "$PROJECT_CONFIG" ]] && ! git -C "$ROOT" ls-files --error-unmatch -- opencode.jsonc >/dev/null 2>&1; }; then
+  echo "Project opencode.jsonc has pre-existing changes; refusing to run smoke" >&2
+  exit 1
+fi
+PROJECT_CONFIG_EXISTED=0
+PROJECT_BACKUP=""
+if [[ -e "$PROJECT_CONFIG" ]]; then
+  PROJECT_CONFIG_EXISTED=1
+  PROJECT_BACKUP="$(mktemp)"
+  cp -- "$PROJECT_CONFIG" "$PROJECT_BACKUP"
+fi
+restore_project_config() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  if (( PROJECT_CONFIG_EXISTED )); then
+    cp -- "$PROJECT_BACKUP" "$PROJECT_CONFIG" || status=1
+  else
+    rm -f -- "$PROJECT_CONFIG" || status=1
+  fi
+  [[ -z "$PROJECT_BACKUP" ]] || rm -f -- "$PROJECT_BACKUP"
+  exit "$status"
+}
+trap restore_project_config EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 MODELS=("$@")
 if (( ${#MODELS[@]} == 0 )); then
   MODELS=(mnemosyne-file mnemosyne-embedded)
@@ -83,10 +110,5 @@ GLOBAL_AFTER="$(sha256sum "$GLOBAL_CONFIG" | cut -d' ' -f1)"
 if [[ "$GLOBAL_BEFORE" != "$GLOBAL_AFTER" ]]; then
   echo "Global OpenCode config changed during smoke" >&2
   exit 1
-fi
-PROJECT_AFTER="$(sha256sum "$PROJECT_CONFIG" | cut -d' ' -f1)"
-if [[ "$PROJECT_BEFORE" != "$PROJECT_AFTER" ]]; then
-  echo "Project config was written by the smoke; restoring the original" >&2
-  git -C "$ROOT" checkout -- "$PROJECT_CONFIG" 2>/dev/null || exit 1
 fi
 printf 'PASS: native A/B/C smoke complete\n'

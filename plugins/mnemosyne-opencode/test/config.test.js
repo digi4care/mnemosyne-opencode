@@ -168,3 +168,27 @@ test("an unparseable config file fails loudly instead of falling back silently",
   writeFileSync(join(projectDir, "opencode.jsonc"), '{ "mnemosyne": { "enabled": true,, } }\n');
   assert.throws(() => getProject(ctx), /Cannot parse/);
 });
+
+test("writes reject duplicate mnemosyne blocks and duplicate updated keys without changing the file", async (t) => {
+  const { root, projectDir } = fixture();
+  t.after(() => cleanup(root));
+  for (const input of [
+    '{ "mnemosyne": { "enabled": false }, "mnemosyne": { "enabled": true } }',
+    '{ "mnemosyne": { "enabled": false, "enabled": true } }',
+  ]) {
+    const path = join(projectDir, "opencode.jsonc");
+    writeFileSync(path, input);
+    assert.throws(() => writeProjectConfig(projectDir, { enabled: true }), /duplicate mnemosyne/);
+    assert.equal(readFileSync(path, "utf8"), input);
+  }
+});
+
+test("writes reject malformed JSONC without changing the file", async (t) => {
+  const { root, projectDir } = fixture();
+  t.after(() => cleanup(root));
+  const input = '{ "mnemosyne": { "enabled": false,, } }';
+  const path = join(projectDir, "opencode.jsonc");
+  writeFileSync(path, input);
+  assert.throws(() => writeProjectConfig(projectDir, { enabled: true }), /Cannot parse/);
+  assert.equal(readFileSync(path, "utf8"), input);
+});

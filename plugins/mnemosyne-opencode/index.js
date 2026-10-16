@@ -1,5 +1,5 @@
 import { Plugin } from "@opencode/plugin";
-import { applyEdits, modify, parse } from "jsonc-parser";
+import { applyEdits, modify, parse, parseTree } from "jsonc-parser";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -100,12 +100,33 @@ function validateConfigValue(key, value) {
 export function writeProjectConfig(directory, changes) {
   const path = projectConfigPath(directory);
   const original = existsSync(path) ? readFileSync(path, "utf8") : "{\n}\n";
+  const parseChecked = (text) => {
+    const errors = [];
+    const value = parse(text, errors, { allowTrailingComma: true, disallowComments: false });
+    if (errors.length) throw new Error(`Cannot parse ${path}: ${errors[0].error} at offset ${errors[0].offset}`);
+    return value && typeof value === "object" ? value : {};
+  };
+  parseChecked(original);
+  const tree = parseTree(original, [], { allowTrailingComma: true });
+  const rootKeys = tree?.children || [];
+  const mnemosyneNodes = rootKeys.filter((entry) => entry.children?.[0]?.value === "mnemosyne");
+  if (mnemosyneNodes.length > 1) throw new Error("Cannot update config with duplicate mnemosyne keys");
+  // Detect duplicate updated keys within the selected block.
+  const blockNode = mnemosyneNodes[0]?.children?.[1];
+  for (const key of Object.keys(changes)) {
+    const count = (blockNode?.children || []).filter((entry) => entry.children?.[0]?.value === key).length;
+    if (count > 1) throw new Error(`Cannot update duplicate mnemosyne.${key} keys`);
+  }
   let text = original;
   for (const [key, value] of Object.entries(changes)) {
     validateConfigValue(key, value);
     text = applyEdits(text, modify(text, ["mnemosyne", key], value, {
       formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
     }));
+  }
+  const result = parseChecked(text);
+  for (const [key, value] of Object.entries(changes)) {
+    if (result.mnemosyne?.[key] !== value) throw new Error(`Config update verification failed for mnemosyne.${key}`);
   }
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.tmp-${process.pid}`;
