@@ -9,6 +9,8 @@ Automatic, per-project memory for OpenCode, backed by Mnemosyne.
   configuration, environment variables, troubleshooting.
 - **[PRD](docs/PRD-memory-lifecycle.md)** — the decided design: memory lifecycle,
   configuration model, global memory, and the open implementation order.
+- **[Release readiness](docs/RELEASE-READINESS.md)** — packaging blockers, the test
+  ladder, and the language policy for everything that ships.
 
 ## Install
 
