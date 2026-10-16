@@ -69,9 +69,60 @@ test("on/off writes the project config file, not the state file", async (t) => {
   if (existsSync(statePath)) assert.doesNotMatch(readFileSync(statePath, "utf8"), /"enabled"/);
 });
 
-test("writing config preserves comments and unrelated keys byte for byte", async (t) => {
-  const { ctx, command, root, projectDir } = fixture();
+test("writeMode defaults to project, validates values, and persists mode commands", async (t) => {
+  const { ctx, root, projectDir, replies } = fixture();
   t.after(() => cleanup(root));
+  const { createMnemosyneCommand } = await import("../index.js");
+  const command = createMnemosyneCommand(ctx, { transitionMode: async (persist) => persist() });
+  assert.equal(getProject(ctx).writeMode, "project");
+  assert.throws(() => writeProjectConfig(projectDir, { writeMode: "other" }), /writeMode/);
+  await command.execute({ sessionID: "ses-a", prompt: { text: "/mnemosyne global on" } });
+  assert.equal(getProject(ctx).writeMode, "global");
+  assert.equal(JSON.parse(readFileSync(join(projectDir, "opencode.jsonc"), "utf8")).mnemosyne.writeMode, "global");
+  await command.execute({ sessionID: "ses-a", prompt: { text: "/mnemosyne global off" } });
+  assert.equal(getProject(ctx).writeMode, "project");
+  assert.match(replies.at(-1), /project/);
+});
+
+test("mode switch awaits flush and aborts persistence when flush rejects", async (t) => {
+  const { ctx, root, projectDir } = fixture();
+  t.after(() => cleanup(root));
+  const { createMnemosyneCommand } = await import("../index.js");
+  let flushed = false;
+  const command = createMnemosyneCommand(ctx, { transitionMode: async (persist) => {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    flushed = true;
+    return persist();
+  } });
+  await command.execute({ sessionID: "ses", prompt: { text: "/mnemosyne global on" } });
+  assert.equal(flushed, true);
+  assert.equal(getProject(ctx).writeMode, "global");
+  const failing = createMnemosyneCommand(ctx, { transitionMode: async () => { throw new Error("flush failed"); } });
+  await assert.rejects(failing.execute({ sessionID: "ses", prompt: { text: "/mnemosyne global off" } }), /flush failed/);
+  assert.equal(getProject(ctx).writeMode, "global");
+  assert.equal(JSON.parse(readFileSync(join(projectDir, "opencode.jsonc"), "utf8")).mnemosyne.writeMode, "global");
+});
+
+test("global on refuses while globalBank is disabled without changing write mode", async (t) => {
+  const { ctx, command, root, projectDir, replies } = fixture({ globalBank: false, writeMode: "project" });
+  t.after(() => cleanup(root));
+  await command.execute({ sessionID: "ses-a", prompt: { text: "/mnemosyne global on" } });
+  assert.equal(getProject(ctx).writeMode, "project");
+  assert.match(replies.at(-1), /disabled/);
+});
+
+test("disabled global bank makes configured global write mode effectively project-only", async (t) => {
+  const { ctx, root } = fixture({ globalBank: false, writeMode: "global" });
+  t.after(() => cleanup(root));
+  assert.equal(getProject(ctx).writeMode, "global");
+  assert.equal(getProject(ctx).effectiveWriteMode, "project");
+});
+
+test("writing config preserves comments and unrelated keys byte for byte", async (t) => {
+  const { ctx, root, projectDir } = fixture();
+  t.after(() => cleanup(root));
+  const { createMnemosyneCommand } = await import("../index.js");
+  const command = createMnemosyneCommand(ctx, { transitionMode: async (persist) => persist() });
 
   const original = [
     "{",

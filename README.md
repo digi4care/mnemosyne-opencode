@@ -1,6 +1,6 @@
 # Mnemosyne OpenCode integration
 
-Automatic, per-project memory for OpenCode, backed by Mnemosyne.
+Automatic project and shared memory for OpenCode, backed by Mnemosyne.
 
 - **[Working with memory](docs/working-with-memory.md)** — start here. What the plugin
   does, how to work with it, what it deliberately does not do, and why it is built this
@@ -20,11 +20,12 @@ Automatic, per-project memory for OpenCode, backed by Mnemosyne.
 ```
 
 Or, from a local checkout, use the absolute path to `plugins/mnemosyne-opencode`.
-Then restart OpenCode and enable it once per project:
+Then restart OpenCode, enable memory, and optionally switch write mode:
 
 ```
 /mnemosyne mnemosyne file
 /mnemosyne on
+/mnemosyne global on  # optional: route new turns to the shared bank
 ```
 
 Requires `uv`/`uvx` and Node 20+. The `embedded` backend additionally requires Ollama

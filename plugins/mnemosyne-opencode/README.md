@@ -1,8 +1,8 @@
 # Mnemosyne OpenCode plugin
 
-Automatic, project-scoped memory for OpenCode. Backed by Mnemosyne. Once enabled
-in a project, the plugin recalls relevant past memories before each prompt and
-writes new user/assistant turns back to the project bank. No model-driven
+Automatic project and shared memory for OpenCode. Backed by Mnemosyne. Once enabled
+in a project, the plugin recalls project memories first and can supplement them from
+the shared bank; new user/assistant turns go to the configured write destination. No model-driven
 remember/recall required.
 
 **Backends**
@@ -15,6 +15,7 @@ remember/recall required.
 |---|---|
 | `/mnemosyne` | show help |
 | `/mnemosyne on\|off` | enable/disable automatic memory for this project |
+| `/mnemosyne global on\|off` | route writes to shared/project bank after flushing pending turns |
 | `/mnemosyne status` | backend, enabled, bank, storage, config source, last error |
 | `/mnemosyne stats` | backend counters |
 | `/mnemosyne file` | Mnemosyne without embeddings |
@@ -36,7 +37,8 @@ overrides go in the project's own `opencode.jsonc`.
     "backend": "mnemosyne-file",
     "recallLimit": 4,
     "enabled": false,
-    "globalBank": true
+    "globalBank": true,
+    "writeMode": "project"
   }
 }
 ```
@@ -46,7 +48,8 @@ overrides go in the project's own `opencode.jsonc`.
 | `enabled` | boolean | `false` | memory on for this project |
 | `backend` | string | `mnemosyne-file` | `mnemosyne-file` or `mnemosyne-embedded` |
 | `recallLimit` | integer 1–20 | `4` | memories injected per prompt |
-| `globalBank` | boolean | `true` | also recall from the shared global bank |
+| `globalBank` | boolean | `true` | master switch for shared-bank recall and writes; `false` disables both |
+| `writeMode` | string | `project` | write destination: `project` or shared `opencode_global` |
 | `dataDir` | string | storage root | override the bank directory |
 
 **Precedence:** project config, then global config, then the legacy

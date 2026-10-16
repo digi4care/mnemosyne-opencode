@@ -8,11 +8,14 @@ how to work with it, and what it deliberately does not do.
 
 Once enabled for a project, the plugin runs without any further action from you:
 
-- **Recall.** Before each of your prompts, it searches that project's memory and injects
-  the four most relevant results into the model's context, wrapped in a
-  `<mnemosyne_memory>` block.
+- **Recall.** Before each of your prompts, it searches the project bank first and can
+  add one non-duplicate result from the shared bank, within the configured recall limit.
+  Results are wrapped in a `<mnemosyne_memory>` block.
 - **Write-back.** When a session goes idle, new user and assistant turns are stored in
-  that project's bank. Tool output is not stored. Injected memories are not stored back.
+  the configured bank. Tool output is not stored. Injected memories are not stored back.
+- `/mnemosyne global on` switches new writes to the shared `opencode_global` bank;
+  `/mnemosyne global off` returns to project writes. Pending turns are flushed before
+  switching. Setting `globalBank: false` disables both shared-bank recall and writes.
 
 You never call remember or recall yourself. The model does not decide what to store.
 
@@ -62,12 +65,12 @@ but never shown to you otherwise.
 | Not supported | Why it matters to you |
 |---|---|
 | No updating or invalidation | old and new values compete; you cannot rely on "latest wins" |
-| No cross-project memory | your personal preferences must be repeated per project |
 | No consolidation | `episodic_memory` stays empty; there is no summarised layer |
 | No secrets handling | memories are stored as plain text in a local SQLite file. Do not paste credentials into a prompt |
 
-The first two are specified in the [PRD](PRD-memory-lifecycle.md) and built in phases
-2 and 5 of its implementation order. The third is a deliberate choice, not a defect.
+Updating/invalidation is specified in the [PRD](PRD-memory-lifecycle.md) and remains
+planned for phase 5. Shared cross-project memory is available through the global bank.
+The lack of consolidation is a deliberate choice, not a defect.
 
 ## Why it is built this way
 

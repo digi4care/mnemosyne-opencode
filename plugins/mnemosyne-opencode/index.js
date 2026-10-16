@@ -35,7 +35,7 @@ function statePath() {
 // projects.json. Projects have no runtime dependencies, so the plugin does not
 // assume a project is a git checkout; a plain directory without a config file is
 // perfectly valid.
-const CONFIG_KEYS = Object.freeze(["enabled", "backend", "recallLimit", "globalBank", "dataDir"]);
+const CONFIG_KEYS = Object.freeze(["enabled", "backend", "recallLimit", "globalBank", "dataDir", "writeMode"]);
 const DEFAULT_RECALL_LIMIT = 4;
 const KNOWN_BACKENDS = new Set(Object.values(BACKENDS));
 
@@ -92,6 +92,7 @@ function validateConfigValue(key, value) {
   if (key === "enabled" || key === "globalBank") {
     if (typeof value !== "boolean") throw new Error(`${key} must be true or false.`);
   }
+  if (key === "writeMode" && value !== "project" && value !== "global") throw new Error('writeMode must be "project" or "global".');
 }
 
 // Surgical write: only the `mnemosyne` block is touched, and comments plus
@@ -175,6 +176,8 @@ export function getProject(ctx) {
     backend: pickConfig(config, saved, "backend", BACKENDS.file),
     recallLimit: pickConfig(config, saved, "recallLimit", DEFAULT_RECALL_LIMIT),
     globalBank: pickConfig(config, saved, "globalBank", true) !== false,
+    writeMode: pickConfig(config, saved, "writeMode", "project"),
+    effectiveWriteMode: pickConfig(config, saved, "writeMode", "project") === "global" && pickConfig(config, saved, "globalBank", true) !== false ? "global" : "project",
     dataDir: pickConfig(config, saved, "dataDir", defaultDataDir()),
     lastError: saved.lastError || "",
     // Which layers actually spoke. Reported by /mnemosyne status so the user can
@@ -308,7 +311,116 @@ function startWorker(project) {
 
 let currentWorker;
 
-function workerCall(project, operation, payload) {
+export function writeDestination(project) {
+  return project.effectiveWriteMode === "global" ? { ...project, bank: "opencode_global" } : project;
+}
+
+export function assignTurnModes(turns, previousCount, snapshots, fallbackMode, continuationMode) {
+  let mode = continuationMode ?? fallbackMode;
+  const assigned = [];
+  for (const turn of turns.slice(previousCount)) {
+    if (turn.role === "user" && snapshots.length) mode = snapshots.shift();
+    assigned.push({ ...turn, writeMode: mode });
+  }
+  return assigned;
+}
+
+export function createSerializedFlush(flush) {
+  const queues = new Map();
+  return (sessionID) => {
+    const previous = queues.get(sessionID) || Promise.resolve();
+    const next = previous.catch(() => {}).then(() => flush(sessionID));
+    queues.set(sessionID, next);
+    return next;
+  };
+}
+
+export function createSerializedCallQueue(run) {
+  let queue = Promise.resolve();
+  return (...args) => {
+    const result = queue.then(() => run(...args));
+    queue = result.catch(() => {});
+    return result;
+  };
+}
+
+export function createTransitionBoundary() {
+  let active = 0;
+  let transitioning = false;
+  let pendingTransitions = 0;
+  let waiters = [];
+  let transitionQueue = Promise.resolve();
+  const enter = async () => {
+    while (transitioning) await new Promise((resolve) => waiters.push(resolve));
+    active++;
+    return () => {
+      active--;
+      if (active === 0) waiters.splice(0).forEach((resolve) => resolve());
+    };
+  };
+  return {
+    runPrompt: async (fn) => {
+      const leave = await enter();
+      try { return await fn(); } finally { leave(); }
+    },
+    transition: (fn) => {
+      pendingTransitions++;
+      transitioning = true;
+      const result = transitionQueue.then(async () => {
+        try {
+          while (active > 0) await new Promise((resolve) => waiters.push(resolve));
+          return await fn();
+        } finally {
+          pendingTransitions--;
+          if (pendingTransitions === 0) {
+            transitioning = false;
+            waiters.splice(0).forEach((resolve) => resolve());
+          }
+        }
+      });
+      transitionQueue = result.catch(() => {});
+      return result;
+    },
+  };
+}
+
+export async function recallMemories(ctx, project, query, call = backendCall) {
+  let projectResults = [];
+  let projectError;
+  try { projectResults = await call(ctx, project, "recall", { query, limit: project.recallLimit }); }
+  catch (error) { projectError = error; }
+  if (!project.globalBank) {
+    if (projectError) { updateState(ctx, { lastError: `Project recall failed: ${projectError.message}` }); throw projectError; }
+    updateState(ctx, { lastError: "" });
+    return projectResults;
+  }
+  try {
+    const globalResults = await call(ctx, { ...project, bank: "opencode_global" }, "recall", { query, limit: project.recallLimit });
+    const seen = new Set(projectResults.map((item) => item.content));
+    const extra = globalResults.find((item) => !seen.has(item.content));
+    if (projectError) {
+      updateState(ctx, { lastError: `Project recall failed; using global results: ${projectError.message}` });
+      return globalResults.slice(0, project.recallLimit);
+    }
+    updateState(ctx, { lastError: "" });
+    return [...projectResults, ...(extra && projectResults.length < project.recallLimit ? [extra] : [])];
+  } catch (error) {
+    if (projectError) {
+      const message = `Project and global recall failed: ${projectError.message}; ${error.message}`;
+      updateState(ctx, { lastError: message });
+      console.error(`Mnemosyne recall failed: ${message}`);
+      throw new Error(message);
+    }
+    updateState(ctx, { lastError: `Global recall failed: ${error.message}` });
+    console.error(`Mnemosyne global recall failed: ${error.message}`);
+    return projectResults;
+  }
+}
+
+const queueWorkerCall = createSerializedCallQueue((project, operation, payload) => workerCallNow(project, operation, payload));
+function workerCall(project, operation, payload) { return queueWorkerCall(project, operation, payload); }
+
+function workerCallNow(project, operation, payload) {
   let worker = currentWorker;
   if (!worker || worker.backend !== project.backend || worker.bank !== project.bank) {
     if (worker) {
@@ -412,7 +524,7 @@ function notify(ctx, sessionID, display, modelNote) {
   });
 }
 
-export function createMnemosyneCommand(ctx) {
+export function createMnemosyneCommand(ctx, { transitionMode } = {}) {
   return {
     name: "mnemosyne",
     description: "Toggle and configure automatic project memory",
@@ -430,6 +542,7 @@ export function createMnemosyneCommand(ctx) {
           [
             "/mnemosyne — show this help",
             "/mnemosyne on|off — enable or disable automatic memory for this project",
+            "/mnemosyne global on|off — route writes to shared or project bank",
             "/mnemosyne status — backend, enabled state, bank, storage, last error",
             "/mnemosyne stats — backend counters",
             "/mnemosyne file — Mnemosyne without embeddings",
@@ -453,6 +566,8 @@ export function createMnemosyneCommand(ctx) {
             `backend: ${project.backend}`,
             `recallLimit: ${project.recallLimit}`,
             `globalBank: ${project.globalBank}`,
+            `writeMode: ${project.writeMode}`,
+            `effectiveWriteMode: ${project.effectiveWriteMode}`,
             `bank: ${project.bank}`,
             `project: ${project.directory}`,
             `data: ${project.dataDir}`,
@@ -460,6 +575,15 @@ export function createMnemosyneCommand(ctx) {
           ].join("\n") + error,
           `Project memory status printed in chat: enabled=${project.enabled}, backend=${project.backend}.`,
         );
+      }
+
+      if (command === "global" && (rest[0] === "on" || rest[0] === "off")) {
+        const project = getProject(ctx);
+        if (rest[0] === "on" && !project.globalBank) return notify(ctx, sessionID, "Global bank is disabled; write mode was not changed.", "Global mode is disabled by configuration.");
+        const persist = () => updateConfig(ctx, { writeMode: rest[0] === "on" ? "global" : "project" });
+        if (!transitionMode) throw new Error("Mode transitions are unavailable outside plugin setup");
+        const updated = await transitionMode(persist);
+        return notify(ctx, sessionID, `Write mode: ${updated.writeMode}`, `Mnemosyne writes now target ${updated.writeMode}.`);
       }
 
       if (command === "stats") {
@@ -545,29 +669,38 @@ export default Plugin.define({
     const ownSessions = new Set();
     const recallBySession = new Map();
     const turnCounts = new Map();
+    const modeSnapshots = new Map();
+    const continuationModes = new Map();
     const events = new AbortController();
+    const boundary = createTransitionBoundary();
+    const serializedFlush = createSerializedFlush(async (sessionID) => boundary.runPrompt(() => flush(sessionID)));
+    const transitionMode = (persist) => boundary.transition(async () => {
+      for (const sessionID of ownSessions) await flush(sessionID);
+      return persist();
+    });
 
     registrations.push(await ctx.command.transform((editor) => {
-      editor.add(createMnemosyneCommand(ctx));
+      editor.add(createMnemosyneCommand(ctx, { transitionMode }));
     }));
 
     registrations.push(await ctx.session.hook("prompt", async (event) => {
-      ownSessions.add(event.sessionID);
-      const project = getProject(ctx);
-      if (!project.enabled) {
-        recallBySession.delete(event.sessionID);
-        return;
-      }
-      const query = event.prompt?.text?.trim();
-      if (!query) return;
-      try {
-        const results = await backendCall(ctx, project, "recall", { query, limit: project.recallLimit });
-        recallBySession.set(event.sessionID, results);
-        updateState(ctx, { lastError: "" });
-      } catch (error) {
-        recallBySession.delete(event.sessionID);
-        console.error(`Mnemosyne recall failed: ${error.message}`);
-      }
+      return boundary.runPrompt(async () => {
+        ownSessions.add(event.sessionID);
+        const project = getProject(ctx);
+        const query = event.prompt?.text?.trim();
+        if (!query) return;
+        if (!project.enabled) { recallBySession.delete(event.sessionID); return; }
+        const snapshots = modeSnapshots.get(event.sessionID) || [];
+        snapshots.push(project.effectiveWriteMode);
+        modeSnapshots.set(event.sessionID, snapshots);
+        try {
+          const results = await recallMemories(ctx, project, event.prompt.text.trim());
+          recallBySession.set(event.sessionID, results);
+        } catch (error) {
+          recallBySession.delete(event.sessionID);
+          console.error(`Mnemosyne recall failed: ${error.message}`);
+        }
+      });
     }));
 
     registrations.push(await ctx.session.hook("context", (event) => {
@@ -584,14 +717,27 @@ export default Plugin.define({
       const turns = renderMessages(messages);
       const previous = turnCounts.get(sessionID) || 0;
       if (turns.length < previous) return;
-      for (const turn of turns.slice(previous)) {
-        await backendCall(ctx, project, "remember", {
+      const snapshots = modeSnapshots.get(sessionID) || [];
+      const pendingSnapshots = [...snapshots];
+      const assignedTurns = assignTurnModes(
+        turns,
+        previous,
+        pendingSnapshots,
+        project.effectiveWriteMode,
+        continuationModes.get(sessionID),
+      );
+      for (const turn of assignedTurns) {
+        const destination = writeDestination({ ...project, effectiveWriteMode: turn.writeMode });
+        await backendCall(ctx, destination, "remember", {
           content: turn.content,
-          metadata: { role: turn.role, session_id: sessionID, project: project.id },
+            metadata: { role: turn.role, session_id: sessionID, project: project.id },
         });
       }
+      snapshots.splice(0, snapshots.length - pendingSnapshots.length);
+      const lastNewTurn = assignedTurns.at(-1);
+      if (lastNewTurn?.role === "user") continuationModes.set(sessionID, lastNewTurn.writeMode);
+      else if (lastNewTurn?.role === "assistant") continuationModes.set(sessionID, lastNewTurn.writeMode);
       turnCounts.set(sessionID, turns.length);
-      updateState(ctx, { lastError: "" });
     };
 
     void (async () => {
@@ -599,7 +745,7 @@ export default Plugin.define({
         const sessionID = event.data?.sessionID;
         if (!sessionID || !IDLE_EVENTS.has(event.type) || !ownSessions.has(sessionID)) continue;
         try {
-          await flush(sessionID);
+          await serializedFlush(sessionID);
         } catch (error) {
           console.error(`Mnemosyne write-back failed for ${sessionID}: ${error.message}`);
         }
