@@ -60,6 +60,13 @@ Marking volatile facts in your prompt text is currently the only lever you have.
 `last_error` in `status` is the only place recall failures surface. They are logged
 but never shown to you otherwise.
 
+Stats show working-memory (including consolidated and unconsolidated), episodic-memory,
+vector, and triple counts for the project bank, followed by `opencode_global` when
+`globalBank` is enabled. Global stats failures leave the project report visible; project
+stats failures stop the command. Mnemosyne 3.15.1 stats apply to the worker instance's
+database. The legacy `total_memories` count is shown separately, not as a BEAM fact
+count; the `banks` field is only a directory listing, not counts per bank.
+
 ## What it deliberately does not do
 
 | Not supported | Why it matters to you |

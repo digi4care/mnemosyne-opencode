@@ -17,7 +17,7 @@ remember/recall required.
 | `/mnemosyne on\|off` | enable/disable automatic memory for this project |
 | `/mnemosyne global on\|off` | route writes to shared/project bank after flushing pending turns |
 | `/mnemosyne status` | backend, enabled, bank, storage, config source, last error |
-| `/mnemosyne stats` | backend counters |
+| `/mnemosyne stats` | per-tier counts for the project bank and (when enabled) shared bank |
 | `/mnemosyne file` | Mnemosyne without embeddings |
 | `/mnemosyne embedded` | Mnemosyne with Ollama embeddings |
 | `/mnemosyne backup [dir]` | write a compressed `.db.gz` backup |
@@ -25,6 +25,13 @@ remember/recall required.
 | `/mnemosyne import hindsight <src>` | import legacy Hindsight data |
 
 ## Configuration
+
+`/mnemosyne stats` reports working-memory total/consolidated/unconsolidated counts,
+episodic-memory and vector counts, and triples separately for the project bank and,
+when `globalBank` is enabled, `opencode_global`. These are worker-instance database
+stats; legacy `total_memories` is shown separately and is not a BEAM fact count.
+The returned `banks` listing is not per-bank counts. A global stats error is shown
+alongside the project report; a project stats error fails the command.
 
 Configuration lives in an `mnemosyne` block in `opencode.jsonc`, not in the plugin's
 state file. Global defaults go in `~/.config/opencode/opencode.jsonc`; per-project

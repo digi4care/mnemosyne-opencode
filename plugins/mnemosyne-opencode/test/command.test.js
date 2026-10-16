@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BACKENDS, createMnemosyneCommand, getProject } from "../index.js";
+import { BACKENDS, createMnemosyneCommand, formatStats, getProject } from "../index.js";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "memory-command-"));
@@ -91,6 +91,46 @@ test("status reports backend and last error without a model call", async (t) => 
   assert.match(status, /backend: mnemosyne-file/);
   assert.match(status, /bank: opencode_[0-9a-f]{16}/);
   assert.equal(calls.at(-1).resume, false);
+});
+
+const sampleStats = { beam: { working_memory: { total: 5, consolidated: 2, unconsolidated: 3 }, episodic_memory: { total: 1, vectors: 4, vec_type: "sqlite" }, triples: { total: 7 } }, total_memories: 9, arbitrary: { secret: true } };
+
+test("stats formatter presents BEAM tiers and labels legacy count", () => {
+  const text = formatStats(sampleStats).join("\n");
+  assert.match(text, /Working memory: total 5; consolidated 2; unconsolidated 3/);
+  assert.match(text, /Episodic memory: total 1; vectors 4; vector type sqlite/);
+  assert.match(text, /Triples: 7/);
+  assert.match(text, /Legacy memories \(separate from BEAM tiers\): 9/);
+  assert.doesNotMatch(text, /secret|arbitrary/);
+});
+
+test("stats queries project then global bank, remains model-free", async (t) => {
+  const { ctx, replies, calls, root } = fixture();
+  t.after(() => cleanup(root));
+  const identities = [];
+  const command = createMnemosyneCommand(ctx, { backendCall: async (_ctx, project, op) => { identities.push([project.bank, op]); return sampleStats; } });
+  await command.execute({ sessionID: "ses-stats", prompt: { text: "/mnemosyne stats" } });
+  assert.deepEqual(identities.map(([bank]) => bank), [getProject(ctx).bank, "opencode_global"]);
+  assert.match(replies[0], /Project bank/);
+  assert.match(replies[0], /Global bank \(opencode_global\)/);
+  assert.equal(calls[0].resume, false);
+});
+
+test("stats reports disabled global bank and preserves project output on global failure", async (t) => {
+  const { ctx, replies, root } = fixture();
+  t.after(() => cleanup(root));
+  const config = await import("node:fs/promises");
+  await config.writeFile(join(getProject(ctx).directory, "opencode.jsonc"), '{"mnemosyne":{"globalBank":false}}');
+  const identities = [];
+  const disabled = createMnemosyneCommand(ctx, { backendCall: async (_ctx, project) => { identities.push(project.bank); return sampleStats; } });
+  await disabled.execute({ sessionID: "ses-stats", prompt: { text: "/mnemosyne stats" } });
+  assert.deepEqual(identities, [getProject(ctx).bank]);
+  assert.match(replies.at(-1), /Global bank: disabled/);
+  await config.writeFile(join(getProject(ctx).directory, "opencode.jsonc"), '{"mnemosyne":{"globalBank":true}}');
+  const enabled = createMnemosyneCommand(ctx, { backendCall: async (_ctx, project) => { if (project.bank === "opencode_global") throw new Error("offline"); return sampleStats; } });
+  await enabled.execute({ sessionID: "ses-stats", prompt: { text: "/mnemosyne stats" } });
+  assert.match(replies.at(-1), /Working memory: total 5/);
+  assert.match(replies.at(-1), /Global bank .*stats unavailable: offline/);
 });
 
 // The CLI-backed commands (backup, verify, import hindsight) shell out through

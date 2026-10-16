@@ -524,7 +524,20 @@ function notify(ctx, sessionID, display, modelNote) {
   });
 }
 
-export function createMnemosyneCommand(ctx, { transitionMode } = {}) {
+export function formatStats(stats) {
+  const beam = stats?.beam || {};
+  const working = beam.working_memory || {};
+  const episodic = beam.episodic_memory || {};
+  const triples = beam.triples || {};
+  return [
+    `Working memory: total ${working.total ?? 0}; consolidated ${working.consolidated ?? 0}; unconsolidated ${working.unconsolidated ?? 0}`,
+    `Episodic memory: total ${episodic.total ?? 0}; vectors ${episodic.vectors ?? 0}; vector type ${episodic.vec_type ?? "unknown"}`,
+    `Triples: ${triples.total ?? 0}`,
+    `Legacy memories (separate from BEAM tiers): ${stats?.total_memories ?? 0}`,
+  ];
+}
+
+export function createMnemosyneCommand(ctx, { transitionMode, backendCall: callBackend = backendCall } = {}) {
   return {
     name: "mnemosyne",
     description: "Toggle and configure automatic project memory",
@@ -588,8 +601,19 @@ export function createMnemosyneCommand(ctx, { transitionMode } = {}) {
 
       if (command === "stats") {
         const project = getProject(ctx);
-        const stats = await backendCall(ctx, project, "stats");
-        return notify(ctx, sessionID, JSON.stringify(stats, null, 2).slice(0, 6000), "Backend memory statistics printed in chat.");
+        const stats = await callBackend(ctx, project, "stats");
+        const lines = [`Project bank (${project.bank})`, ...formatStats(stats)];
+        if (project.globalBank) {
+          try {
+            const globalStats = await callBackend(ctx, { ...project, bank: "opencode_global" }, "stats");
+            lines.push("", "Global bank (opencode_global)", ...formatStats(globalStats));
+          } catch (error) {
+            lines.push("", `Global bank (opencode_global): stats unavailable: ${error.message}`);
+          }
+        } else {
+          lines.push("", "Global bank: disabled");
+        }
+        return notify(ctx, sessionID, lines.join("\n"), "Backend memory statistics printed in chat.");
       }
 
       if (command === "backup") {
