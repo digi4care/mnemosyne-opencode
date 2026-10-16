@@ -14,14 +14,12 @@ Automatic, per-project memory for OpenCode, backed by Mnemosyne.
 
 ## Install
 
-Add the absolute path to the `plugins` array in `~/.config/opencode/opencode.jsonc`:
-
 ```jsonc
-"plugins": [
-  "/home/digi4care/projects/opencode-ab-test-Mnemosyne-vs-Hindsight/plugins/mnemosyne-opencode"
-]
+// ~/.config/opencode/opencode.jsonc
+"plugins": [ "@digi4care/mnemosyne-opencode" ]
 ```
 
+Or, from a local checkout, use the absolute path to `plugins/mnemosyne-opencode`.
 Then restart OpenCode and enable it once per project:
 
 ```

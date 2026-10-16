@@ -73,14 +73,27 @@ itself, notably `MNEMOSYNE_NO_EMBEDDINGS`, which is derived from `backend`.
 
 ## Installation
 
-1. Add this plugin to your OpenCode config (`~/.config/opencode/opencode.jsonc`):
-   ```jsonc
-   "plugins": [
-     "/absolute/path/to/mnemosyne-opencode"
-   ]
-   ```
-2. Restart OpenCode (`opencode service restart`) or start a fresh session.
-3. Pick a project directory.
+**From npm** (recommended once published):
+
+```jsonc
+"plugins": [ "@digi4care/mnemosyne-opencode" ]
+```
+
+OpenCode installs npm plugins with Bun at startup and caches them in
+`~/.cache/opencode/node_modules/`. **Not yet verified:** whether a version pin such as
+`"@digi4care/mnemosyne-opencode@0.2.0"` is accepted. Do not promise pinning until it is
+tested.
+
+**From a local checkout:**
+
+```jsonc
+"plugins": [
+  "/absolute/path/to/mnemosyne-opencode"
+]
+```
+
+Either way, restart OpenCode (`opencode service restart`) or start a fresh session,
+then pick a project directory.
 
 ## Quick start
 
