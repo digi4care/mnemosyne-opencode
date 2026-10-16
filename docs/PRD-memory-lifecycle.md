@@ -1,8 +1,8 @@
 # PRD — Memory lifecycle en configuratie van de Mnemosyne OpenCode plugin
 
-Status: **besluiten genomen, klaar voor implementatie** · Versie 1.0 · 16 oktober 2026 · auteur: Chris Engelhard
+Status: **besluiten genomen, implementatie geblokkeerd door §12** · Versie 1.1 · 16 oktober 2026 · auteur: Chris Engelhard
 
-Alle vier de openstaande vragen zijn beantwoord (§8). De persona-vraag is beantwoord met nee (§11.1). De volgorde in §7 staat vast; onderdelen 1, 2 en 3 zijn onafhankelijk en kunnen direct.
+Alle vier de openstaande vragen zijn beantwoord (§8) en de persona-vraag met nee (§11.1). Dit document is nog **niet** klaar als opdracht: §12 bevat twee blokkades, waarvan D3 (per-type vervalbaarheid) drie ontwerpbesluiten mist. Onderdelen 1, 2 en 3 uit §7 kunnen wel direct, mits hun onderlinge volgorde wordt gerespecteerd (§12 B6).
 
 ---
 
@@ -108,14 +108,12 @@ Mnemosyne levert de middelen, wij gebruiken er geen van:
 **A. Niets doen.** ledig opslagbewaarder.
 Kosten: 0. Nadeel: het probleem hierboven.
 
-**B. Alleen `sleep` aansluiten.** Na elke N turns (bijvoorbeeld 50) of bij sessie-einde één keer `mnemosyne sleep` draaien.
-Kosten: ~2 uur. Wat het oplevert: consolidatie naar episodic, extractie van feiten, eerste vorm van samenvatting. Wat het níét oplost: een individuele memory die een ander tegenspreekt.
+**B. ~~Alleen `sleep` aansluiten.~~ — ingetrokken** (16-10-2026, zie correctie hieronder). Een automatische trigger voor consolidatie is niet aangenomen: zie §11.2. `sleep` is nu een expliciet commando.
 
-**C. `sleep` + recency-weging in de injectie.** Zoals B, plus: memories ouder dan X dagen krijgen een lagere `importance` bij injectie.
-Kosten: ~4 uur. Oplost: oude regels overstemmen nieuw niet meer. Niet: een fout geciteerde regel verdwijnt, hij zakt alleen.
+**C. ~~`sleep` + recency-weging in de injectie.~~ — ingetrokken** (16-10-2026). Recency-weging is één penalty voor alles; vervangen door optie E (per-type vervalbaarheid) in §6.
 
-**D. Volledig: `sleep` + `valid_until` + `invalidate` bij tegenspraak.**
-Kosten: 1-2 weken, plus een ontwerpbesluit over tegenspraakherkenning. Zie de open vraag hieronder.
+**D. Volledig: `valid_until` + `invalidate` bij tegenspraak.**
+Kosten: 1-2 weken, plus het ontwerpbesluit over tegenspraakherkenning (LLM aan of uit). Zie het blokkadebesluit B4 in §12.
 
 ### Het ontwerpbesluit dat C/D blokkeert
 Tegenspraak herkennen is een LLM-stap. Met `llm_enabled: false` kan het alleen heuristisch (dezelfde sleutel, verschillende inhoud), en dat is zwak.
@@ -143,7 +141,7 @@ Dit is geen defect, maar een kennislek: de README legt de twee backends uit also
 Feiten:
 - Beide backends gebruiken **dezelfde tabellen** en dezelfde `recall`.
 - File = FTS5 + importance + recency. Embedded = idem plus dense vectors (50% van de ranking).
-- In de projectbank: 186 working, 0 episodic. De episodic-laag is leeg omdat `sleep` nooit draaide, niet omdat de backend file is.
+- In de projectbank: 186 working, 0 episodic. De episodic-laag is leeg. Of dat een defect is, is nadrukkelijk **geen** defect: `sleep` draait nooit, en volgens §11.2 is episodisch bewaren de veiligere toestand.
 - `memory_embeddings`: 89. Die embeddings bestaan ook in een file-bank als eerder embedded gedraaid heeft — embeddings zijn per opgeslagen rij, niet per backend-keuze.
 
 De echte tiers: `working_memory` (ruwe turns) → `episodic_memory` (samengevat door `sleep`) → `memories`/`facts` (geëxtraheerd, duurzaam).
@@ -157,7 +155,7 @@ Kosten: ~1 uur. lost het lek, niet het probleem.
 Kosten: ~2 uur. Dan zie je in één oogopslag waaróm een recall iets vond of niets.
 
 ### Advies
-**B**. Kleine wijziging, en het maakt vraag 2 zichtbaar: zodra `episodic_memory` groeit, zie je of `sleep` werkt.
+**B**. Kleine wijziging: je ziet per tier wat erin zit. De tier-telling is een meetpunt voor D3, niet voor `sleep` — die draait alleen als je er zelf om vraagt.
 
 ---
 
@@ -218,7 +216,7 @@ Mijn mening over de vraag "is dit de juiste vendor": het verschil zit niet in de
 | 5 | Per-type vervalbaarheid (optie E) | 3 | 3 dagen |
 | 6 | Tegenspraak-invalidate | 5, plus besluit over LLM | 1-2 weken |
 
-Onderdelen 1, 2 en 3 zijn onafhankelijk van elkaar. 4 en 5 willen 3 eerst, zodat het effect zichtbaar is. 6 is bewust uitgesteld.
+Onderdelen 1, 2 en 3 zijn in principe los te bouwen, maar niet in willekeurige volgorde: onderdeel 1 voegt `globalBank` en `recallLimit` aan de config toe, onderdeel 2 gebruikt `globalBank`, onderdeel 3 toont de uitkomst van 2 in `/mnemosyne stats`. De volgorde 1 → 2 → 3 is dus reëel. 4 en 5 willen 3 eerst, zodat het effect meetbaar is. 6 is bewust uitgesteld tot de keuze in §12 B4.
 
 ### Documentatie als leverbaar
 

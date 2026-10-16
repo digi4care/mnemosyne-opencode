@@ -12,15 +12,19 @@ functional design is in [PRD-memory-lifecycle.md](PRD-memory-lifecycle.md).
 **Everything that ships to npm is English.** That is not negotiable and not a
 preference: an international audience cannot use a Dutch README.
 
-| Surface | Language |
-|---|---|
-| `README.md` (root and package) | English |
-| `docs/*.md` | English |
-| Code comments, commit messages, log and command output | English |
-| CHANGELOG, issue templates | English |
+| Surface | Language | Ships to npm? |
+|---|---|---|
+| `plugins/mnemosyne-opencode/README.md` | English | yes |
+| Root `README.md` | English | no, but public on GitHub |
+| Code comments, commit messages, command output | English | yes |
+| `docs/working-with-memory.md` | English | no |
+| CHANGELOG, issue templates | English | no |
 
-Dutch is fine in conversation and in internal research notes under
-`~/projects/opencode-agents/research/`. Those never ship.
+**Open, not yet resolved:** `docs/PRD-memory-lifecycle.md` and the research notes
+are still written in Dutch. They do not ship inside the npm tarball — the `files`
+allowlist limits it to five files — so this is not a publishing blocker, but it
+contradicts the intent of "everything in English". Decision needed before the
+repository goes public.
 
 ## Verified packaging blockers
 

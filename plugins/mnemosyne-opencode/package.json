@@ -1,12 +1,38 @@
 {
   "name": "mnemosyne-opencode",
   "version": "0.2.0",
-  "description": "Native OpenCode plugin with selectable Mnemosyne project-memory backend",
+  "description": "Automatic, per-project long-term memory for OpenCode, backed by Mnemosyne",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "mnemosyne",
+    "memory",
+    "agent-memory",
+    "llm"
+  ],
+  "homepage": "https://github.com/ChrisEngelhard/mnemosyne-opencode#readme",
+  "bugs": {
+    "url": "https://github.com/ChrisEngelhard/mnemosyne-opencode/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChrisEngelhard/mnemosyne-opencode.git"
+  },
+  "license": "MIT",
+  "author": "Chris Engelhard <chris@chrisengelhard.nl>",
   "type": "module",
   "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "index.js",
+    "memory_worker.py",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "test": "node --test",
-    "smoke": "bash ../../scripts/smoke-native-abc.sh"
+    "test": "node --test"
   },
   "devDependencies": {
     "@opencode/plugin": "^2.0.18"
