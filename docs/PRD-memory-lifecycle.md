@@ -27,7 +27,7 @@ De plugin doet precies wat de README zegt: per project automatisch memory opslaa
 
 - Er is geen manier om iets in te stellen behalve via `/mnemosyne` commando's.
 - Er is geen mechanisme dat een memory verouderd verklaart, corrigeert of laat vervallen.
-- Er is geen gedeelde memory; alles is per projectbank geïsoleerd.
+- Er is geen gedeelde memory; alles is per projectbank gedrployd.
 - Consolidatie bestaat in Mnemosyne maar wordt nooit aangeroepen.
 
 Gevolg in de praktijk: de plugin onthoudt veel, maar niets van wat hij onthoudt wordt bijgewerkt. Dat is een koelkast, geen geheugen.
@@ -219,6 +219,22 @@ Mijn mening over de vraag "is dit de juiste vendor": het verschil zit niet in de
 | 6 | Tegenspraak-invalidate | 5, plus besluit over LLM | 1-2 weken |
 
 Onderdelen 1, 2 en 3 zijn onafhankelijk van elkaar. 4 en 5 willen 3 eerst, zodat het effect zichtbaar is. 6 is bewust uitgesteld.
+
+### Documentatie als leverbaar
+
+Naast de code hoort één gebruikersdocument: **`docs/working-with-memory.md`**.
+
+Doelgroep: een ontwikkelaar die OpenCode en code kan lezen, maar nog nooit met agent
+memory heeft gewerkt. Omvang: compact, één tot twee pagina's. Inhoud: wat de plugin doet,
+vijf regels voor het gebruik, wat hij bewust níét doet, en kort waarom hij zo werkt.
+
+De README linkt ernaar met een **relatieve markdown-link**, niet met een symlink. Een
+symlink met absoluut pad breekt zodra het pakket op npm staat, en een symlink naar een
+pad buiten de repository werkt dan sowieso niet voor andere gebruikers.
+
+Dat document beschrijft uitsluitend wat **gedrployd** is. Geplande features worden daar
+niet als bestaand gepresenteerd; waar een regel verandert door D1–D4 moet het document
+mee.
 
 ---
 
