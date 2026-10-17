@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignTurnModes, createSerializedCallQueue, createSerializedFlush, createTransitionBoundary, getProject, recallMemories, writeDestination } from "../index.js";
+import { assignTurnModes, createSerializedCallQueue, createSerializedFlush, createTransitionBoundary, getProject, recallMemories, workerMatchesProject, writeDestination } from "../index.js";
 
 function setup(t) {
   const root = mkdtempSync(join(tmpdir(), "mnemo-global-"));
@@ -66,6 +66,12 @@ test("destination routes effective global writes to shared bank, otherwise prese
   const project = { bank: "opencode_project", effectiveWriteMode: "project" };
   assert.equal(writeDestination(project).bank, "opencode_project");
   assert.equal(writeDestination({ ...project, effectiveWriteMode: "global" }).bank, "opencode_global");
+});
+
+test("worker cache identity includes dataDir", () => {
+  const worker = { backend: "mnemosyne-file", bank: "opencode_project", dataDir: "/data/one" };
+  assert.equal(workerMatchesProject(worker, { ...worker }), true);
+  assert.equal(workerMatchesProject(worker, { ...worker, dataDir: "/data/two" }), false);
 });
 
 test("concurrent idle flushes for one session serialize and do not duplicate turns", async () => {

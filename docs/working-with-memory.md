@@ -35,21 +35,31 @@ comments and other settings alone.
 Every turn you type is stored. Repeating a decision because you assume it was lost
 creates duplicate rows that compete with the original during retrieval.
 
-**3. Corrections are the hard part, and you have to be explicit.**
-Nothing in the plugin updates or invalidates an existing memory. If a value changes,
-the old and the new row both stay, and ranking decides which one the model sees. So
-state the correction as a correction:
+**3. Corrections are manual; the plugin does not detect contradictions.**
+State the new value clearly, then invalidate an obsolete memory from the current
+injected snapshot:
 
-> "From now on the port is 9090, not 8080."
+```
+/mnemosyne invalidate 2
+```
 
-A bare repetition of the new value may lose against the higher-ranked old row.
-This is the single most important thing to know. See "planned" below.
+The number refers to the numbered memory in the current prompt's injected block. A
+project memory is invalidated immediately. A shared-bank memory first shows a preview
+and requires `/mnemosyne confirm`; confirmation is one-time and becomes stale after a
+new prompt or relevant configuration change. The new value is stored through normal
+write-back when the session goes idle, but the plugin does not infer that it contradicts
+the old one.
+
+A bare repetition of the new value does not invalidate the old row. If you do not
+manually invalidate it, both may remain and compete during retrieval.
 
 **4. Say what kind of fact it is when it matters.**
 The plugin stores everything with the same importance (0.7) and no expiry. A durable
 preference ("answer in Dutch") and a volatile value ("the deploy runs on port 8080")
 are treated identically, which means an old port number can outrank a current one.
-Marking volatile facts in your prompt text is currently the only lever you have.
+Retrieval applies a fixed recency boost of up to 5% with a 30-day half-life, separately
+in each bank. Missing or unusable timestamps get no boost. It does not expire or filter
+old memories. Manual invalidation is the way to remove a known-obsolete injected memory.
 
 **5. When something is wrong, ask the plugin.**
 ```
@@ -71,13 +81,16 @@ count; the `banks` field is only a directory listing, not counts per bank.
 
 | Not supported | Why it matters to you |
 |---|---|
-| No updating or invalidation | old and new values compete; you cannot rely on "latest wins" |
-| No consolidation | `episodic_memory` stays empty; there is no summarised layer |
+| No automatic contradiction detection or updates | you must identify and invalidate obsolete injected memories yourself |
+| No per-type expiry | a fixed recency boost can help recent memories rank higher, but old rows remain eligible for recall |
+| No consolidation command or automatic `sleep` | `episodic_memory` stays empty; there is no summarised layer, and phase 4 is deferred |
 | No secrets handling | memories are stored as plain text in a local SQLite file. Do not paste credentials into a prompt |
 
-Updating/invalidation is specified in the [PRD](PRD-memory-lifecycle.md) and remains
-planned for phase 5. Shared cross-project memory is available through the global bank.
-The lack of consolidation is a deliberate choice, not a defect.
+Manual invalidation is available through `/mnemosyne invalidate <n>`; shared-bank
+memories require preview and confirmation. Automatic contradiction detection and
+per-type decay remain unimplemented. Shared cross-project memory is available through
+the global bank. The lack of consolidation is currently intentional, not an automatic
+background action.
 
 ## Why it is built this way
 
@@ -95,7 +108,8 @@ failure mode of agent memory in general, not specific to this plugin.
 **Two claims this plugin previously made were wrong, and are corrected here.**
 Consolidation (`sleep`) was presented as an obvious win. The literature does not
 support making it automatic: continuously consolidated memories rise in usefulness and
-then degrade below a no-memory baseline. It is a command you run deliberately now.
+then degrade below a no-memory baseline. The plugin does not currently expose a `sleep`
+command, and it never consolidates automatically.
 Separately, the `persona` tier looked like a clean route for global memory; in version
 3.15.1 it has no callers, and the flat-profile pattern it uses is a known source of
 invalid persona state.

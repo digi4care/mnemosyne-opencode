@@ -1,6 +1,6 @@
 {
   "name": "@digi4care/mnemosyne-opencode",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Automatic, per-project long-term memory for OpenCode, backed by Mnemosyne",
   "keywords": [
     "opencode",
@@ -22,11 +22,18 @@
   "author": "Chris Engelhard <chris@chrisengelhard.nl>",
   "type": "module",
   "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./server": "./v1-server.js",
+    "./tui": "./v1-tui.js"
+  },
   "engines": {
     "node": ">=20"
   },
   "files": [
     "index.js",
+    "v1-server.js",
+    "v1-tui.js",
     "memory_worker.py",
     "README.md",
     "LICENSE"
@@ -35,7 +42,7 @@
     "test": "node --test"
   },
   "devDependencies": {
-    "@opencode/plugin": "^2.0.18"
+    "@opencode/plugin": "^2.0.26"
   },
   "publishConfig": {
     "access": "public"

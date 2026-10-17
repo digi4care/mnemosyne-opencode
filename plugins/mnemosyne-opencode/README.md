@@ -16,6 +16,9 @@ remember/recall required.
 | `/mnemosyne` | show help |
 | `/mnemosyne on\|off` | enable/disable automatic memory for this project |
 | `/mnemosyne global on\|off` | route writes to shared/project bank after flushing pending turns |
+| `/mnemosyne sleep` | preview the exact provider prompt; then run `/mnemosyne sleep consent`, review the output, and run `approve` or `reject` |
+| `/mnemosyne invalidate <n>` | invalidate a memory from this session's injected snapshot; global memories require confirmation |
+| `/mnemosyne confirm` | confirm the pending global-memory invalidation for the same session/snapshot |
 | `/mnemosyne status` | backend, enabled, bank, storage, config source, last error |
 | `/mnemosyne stats` | per-tier counts for the project bank and (when enabled) shared bank |
 | `/mnemosyne file` | Mnemosyne without embeddings |
@@ -23,6 +26,11 @@ remember/recall required.
 | `/mnemosyne backup [dir]` | write a compressed `.db.gz` backup |
 | `/mnemosyne verify` | database integrity check |
 | `/mnemosyne import hindsight <src>` | import legacy Hindsight data |
+
+Retrieval retains Mnemosyne's relevance ranking and applies a fixed, bounded
+recency boost independently in each bank (up to 5%, 30-day half-life). It never
+filters memories by age or changes stored validity fields. Memories without a
+usable timestamp receive no age boost. This policy is fixed and is not configurable.
 
 ## Configuration
 
@@ -45,7 +53,10 @@ overrides go in the project's own `opencode.jsonc`.
     "recallLimit": 4,
     "enabled": false,
     "globalBank": true,
-    "writeMode": "project"
+    "writeMode": "project",
+    "sleep": {
+      "model": "inherit"
+    }
   }
 }
 ```
@@ -58,6 +69,7 @@ overrides go in the project's own `opencode.jsonc`.
 | `globalBank` | boolean | `true` | master switch for shared-bank recall and writes; `false` disables both |
 | `writeMode` | string | `project` | write destination: `project` or shared `opencode_global` |
 | `dataDir` | string | storage root | override the bank directory |
+| `sleep.model` | string | `inherit` | sleep model: the current V2 session model or one explicit `provider/model`; no plugin fallback list |
 
 **Precedence:** project config, then global config, then the legacy
 `projects.json` value, then the default. `/mnemosyne status` prints which layer
@@ -69,12 +81,63 @@ command reports the path it wrote. Note that this creates a file in your project
 directory, which is likely to be picked up by version control — that is usually
 what you want for a shared team setting, but be aware of it.
 
+Sleep is manual and requires two confirmations: `/mnemosyne sleep` displays the
+provider, model, bank, and exact prompt; `/mnemosyne sleep consent` allows generation;
+then review the generated summary and run `/mnemosyne sleep approve` to store it or
+`/mnemosyne sleep reject` to discard it. A failed storage attempt can be retried with
+`approve` without another model call. V2 uses transient OpenCode generation; on V1,
+sleep reports unsupported rather than storing unreviewed output in chat history.
+Sleep stores an episodic summary and source linkage atomically; it preserves raw turns
+but does not run Mnemosyne's native conflict detection, refresh proposals, or
+degradation logic. It targets the current effective write bank (project or shared),
+never mixes banks, and permits only one pending sleep per bank.
+
 **Environment variables still win over config** for the variables the plugin sets
 itself, notably `MNEMOSYNE_NO_EMBEDDINGS`, which is derived from `backend`.
 
+## OpenCode version and V1 registration
+
+The package root (`@digi4care/mnemosyne-opencode`) remains the V2 plugin entrypoint.
+OpenCode V1.18.35 requires two distinct registrations: the server adapter handles
+recall, context injection, idle flushes, and configuration changes; the TUI companion
+provides `/mnemosyne` commands and local notifications. Register both modules:
+
+```jsonc
+// V1 server plugin configuration
+"plugin": ["@digi4care/mnemosyne-opencode/server"]
+```
+
+```jsonc
+// ~/.config/opencode/tui.json
+{ "plugin": ["@digi4care/mnemosyne-opencode/tui"] }
+```
+
+The package subpaths `./server` and `./tui` are explicit exports. TUI command output
+is local to the terminal, not inserted into chat. Open a session before using the
+commands. V1 exposes discrete TUI commands: `/mnemosyne-help`, `/mnemosyne-on`,
+`/mnemosyne-off`, `/mnemosyne-status`, `/mnemosyne-global-on`,
+`/mnemosyne-global-off`, `/mnemosyne-stats`, `/mnemosyne-invalidate`,
+`/mnemosyne-confirm`, `/mnemosyne-file`, `/mnemosyne-embedded`,
+`/mnemosyne-backup`, `/mnemosyne-verify`, `/mnemosyne-verify-full`,
+`/mnemosyne-import-hindsight`, and `/mnemosyne-sleep`. Commands needing arguments
+use the supported TUI prompt dialog. Global invalidation requires a second
+`/mnemosyne-confirm`; stale snapshots/configuration are rejected. Sleep reports
+unsupported and performs no writes or provider calls. V1 server and TUI processes coordinate through the same
+`MNEMOSYNE_PLUGIN_COORD_DB` file (default:
+`~/.local/share/opencode/storage/plugin/mnemosyne-opencode/plugin-coord.db`).
+If project session inventory or idle status cannot be confirmed completely, V1
+refuses a global/project mode switch.
+
+V1.18.35 does not document an ordering guarantee between `chat.message` and
+`experimental.chat.system.transform`. Recall is injected only when the transform
+hook observes a previously published recall for that session; if that hook runs
+first or is not called for a prompt, no memory block is injected. This adapter does
+not claim prompt-time recall injection in those cases. Message lists reaching the
+requested cap are treated as incomplete and are not flushed.
+
 ## Prerequisites
 
-- OpenCode v2 (≥ 2.0.18).
+- OpenCode v2 (≥ 2.0.18), or OpenCode V1.18.35 with both V1 registrations above.
 - `uvx` (provided by `uv`).
 - `mnemosyne-memory==3.15.1` available via PyPI.
 - Optional: Ollama on `localhost:11434` with `nomic-embed-text` for the

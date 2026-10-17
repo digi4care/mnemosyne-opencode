@@ -93,6 +93,17 @@ function validateConfigValue(key, value) {
     if (typeof value !== "boolean") throw new Error(`${key} must be true or false.`);
   }
   if (key === "writeMode" && value !== "project" && value !== "global") throw new Error('writeMode must be "project" or "global".');
+  if (key === "sleepModel" && !(value === "inherit" || (typeof value === "string" && /^[^/\s]+\/[^/\s]+$/.test(value)))) {
+    throw new Error('sleep.model must be "inherit" or a single provider/model.');
+  }
+}
+
+function resolveSleepModel(directory) {
+  const global = readConfigBlock(globalConfigPath()).sleep;
+  const project = readConfigBlock(projectConfigPath(directory)).sleep;
+  const value = project?.model !== undefined ? project.model : global?.model !== undefined ? global.model : "inherit";
+  validateConfigValue("sleepModel", value);
+  return value;
 }
 
 // Surgical write: only the `mnemosyne` block is touched, and comments plus
@@ -179,6 +190,7 @@ export function getProject(ctx) {
     writeMode: pickConfig(config, saved, "writeMode", "project"),
     effectiveWriteMode: pickConfig(config, saved, "writeMode", "project") === "global" && pickConfig(config, saved, "globalBank", true) !== false ? "global" : "project",
     dataDir: pickConfig(config, saved, "dataDir", defaultDataDir()),
+    sleepModel: resolveSleepModel(identity.directory),
     lastError: saved.lastError || "",
     // Which layers actually spoke. Reported by /mnemosyne status so the user can
     // see whether the config file or the legacy state file is in charge.
@@ -269,7 +281,7 @@ function startWorker(project) {
     env,
     stdio: ["pipe", "pipe", "pipe"],
   });
-  const worker = { child, pending: new Map(), buffer: "", sequence: 0, backend: project.backend, bank: project.bank };
+  const worker = { child, pending: new Map(), buffer: "", sequence: 0, backend: project.backend, bank: project.bank, dataDir: project.dataDir };
 
   child.stdout.on("data", (chunk) => {
     worker.buffer += chunk.toString("utf8");
@@ -420,9 +432,18 @@ export async function recallMemories(ctx, project, query, call = backendCall) {
 const queueWorkerCall = createSerializedCallQueue((project, operation, payload) => workerCallNow(project, operation, payload));
 function workerCall(project, operation, payload) { return queueWorkerCall(project, operation, payload); }
 
+export function workerMatchesProject(worker, project) {
+  return Boolean(
+    worker &&
+    worker.backend === project.backend &&
+    worker.bank === project.bank &&
+    worker.dataDir === project.dataDir,
+  );
+}
+
 function workerCallNow(project, operation, payload) {
   let worker = currentWorker;
-  if (!worker || worker.backend !== project.backend || worker.bank !== project.bank) {
+  if (!workerMatchesProject(worker, project)) {
     if (worker) {
       worker.child.kill("SIGTERM");
       for (const pending of worker.pending.values()) pending.reject(new Error("Backend changed"));
@@ -537,7 +558,22 @@ export function formatStats(stats) {
   ];
 }
 
-export function createMnemosyneCommand(ctx, { transitionMode, backendCall: callBackend = backendCall } = {}) {
+export function configFingerprint(project) {
+  return JSON.stringify({
+    directory: project.directory,
+    dataDir: project.dataDir,
+    bank: project.bank,
+    enabled: project.enabled,
+    backend: project.backend,
+    recallLimit: project.recallLimit,
+    globalBank: project.globalBank,
+    writeMode: project.writeMode,
+    effectiveWriteMode: project.effectiveWriteMode,
+    sleepModel: project.sleepModel,
+  });
+}
+
+export function createMnemosyneCommand(ctx, { transitionMode, flushPendingTurns, backendCall: callBackend = backendCall, getSnapshot = () => undefined, pendingConfirmations = new Map(), expireConfirmations = () => {}, pendingSleeps = new Map(), sleepLocks = new Set() } = {}) {
   return {
     name: "mnemosyne",
     description: "Toggle and configure automatic project memory",
@@ -546,7 +582,96 @@ export function createMnemosyneCommand(ctx, { transitionMode, backendCall: callB
       const raw = (input.prompt?.text || "").trim();
       const args = raw.replace(/^\/mnemosyne(?:\s+|$)/i, "").trim();
       const [action, ...rest] = args.split(/\s+/).filter(Boolean);
-      const command = (action || "").toLowerCase();
+      const command = (action || "").toLowerCase() === "sleep" && rest[0] ? rest[0].toLowerCase() : (action || "").toLowerCase();
+
+      if (["sleep", "consent", "approve", "reject", "cancel"].includes(command)) {
+        const release = (pending) => { if (pending) { pendingSleeps.delete(sessionID); sleepLocks.delete(pending.bank); } };
+        const pending = pendingSleeps.get(sessionID);
+        if (command === "reject" || command === "cancel") {
+          release(pending);
+          return notify(ctx, sessionID, pending ? "Sleep cancelled; no memory was written." : "No sleep is pending.", "Sleep cancelled.");
+        }
+        if (command !== "sleep" && !pending) return notify(ctx, sessionID, "No sleep is pending.", "No sleep is pending.");
+        let project;
+        try { project = getProject(ctx); } catch (error) { release(pending); return notify(ctx, sessionID, `Sleep stopped: ${error.message}`, "Sleep stopped."); }
+        const fingerprint = configFingerprint(project);
+        const destination = writeDestination(project);
+        if (pending && (pending.fingerprint !== fingerprint || pending.bank !== destination.bank)) {
+          release(pending);
+          return notify(ctx, sessionID, "Sleep configuration changed; pending sleep cancelled without writing.", "Sleep cancelled because configuration changed.");
+        }
+        if (command === "sleep") {
+          // V2 is identified only by the documented transient-generation API; never probe or call V1 session.prompt.
+          if (typeof ctx.generate?.text !== "function") return notify(ctx, sessionID, "Sleep is unsupported: this OpenCode session does not expose the V2 transient generation API.", "Sleep is unsupported.");
+          if (sleepLocks.has(destination.bank)) return notify(ctx, sessionID, "A sleep operation is already pending for this bank.", "Sleep already pending.");
+          let session;
+          try { session = await ctx.session.get({ sessionID }); } catch {}
+          if (!session) return notify(ctx, sessionID, "Sleep stopped: the V2 session model is unavailable.", "Sleep stopped.");
+          const configured = project.sleepModel;
+          const model = configured === "inherit" ? session.model : (() => { const [providerID, ...id] = configured.split("/"); return { providerID, modelID: id.join("/") }; })();
+          const providerID = model?.providerID;
+          const id = model?.id || model?.modelID;
+          if (!providerID || !id) return notify(ctx, sessionID, "Sleep stopped: no usable V2 provider/model is available.", "Sleep stopped.");
+          sleepLocks.add(destination.bank);
+          try {
+            const preview = await callBackend(ctx, destination, "sleep_preview", {});
+            const candidates = Array.isArray(preview) ? preview : (preview?.candidates || preview?.items || []);
+            if (!candidates.length) { sleepLocks.delete(destination.bank); return notify(ctx, sessionID, "No sleep candidates are available.", "Sleep has no candidates."); }
+            const prompt = `Summarize these memory candidates as concise episodic memories. Preserve meaning; do not invent facts.\n${JSON.stringify(candidates)}`;
+            pendingSleeps.set(sessionID, { bank: destination.bank, project: destination, fingerprint, model: { providerID, id }, candidates, prompt, phase: "preview" });
+            return notify(ctx, sessionID, `Sleep preview — provider/model: ${providerID}/${id}; bank: ${destination.bank}\nExact provider prompt:\n${prompt}\n\nRun /mnemosyne sleep consent to generate.`, "Sleep preview is ready; consent is required before generation.");
+          } catch (error) { sleepLocks.delete(destination.bank); return notify(ctx, sessionID, `Sleep preview failed: ${error.message}`, "Sleep preview failed."); }
+        }
+        if (command === "consent") {
+          if (pending.phase !== "preview") return notify(ctx, sessionID, "Sleep output is already generated; run approve or reject.", "Sleep consent is not available.");
+          try {
+            if (flushPendingTurns) await flushPendingTurns(sessionID);
+            if (pending.fingerprint !== configFingerprint(getProject(ctx))) throw new Error("Project configuration changed before generation");
+            const output = await ctx.generate.text({ model: pending.model, prompt: pending.prompt });
+            pending.output = typeof output === "string" ? output : output?.text;
+            if (!pending.output) throw new Error("Model returned empty output");
+            pending.phase = "approved-output";
+            return notify(ctx, sessionID, `Generated sleep output:\n${pending.output}\n\nRun /mnemosyne sleep approve to store, or /mnemosyne sleep reject.`, "Sleep output awaits explicit approval.");
+          } catch (error) { release(pending); return notify(ctx, sessionID, `Sleep generation failed: ${error.message}`, "Sleep generation failed."); }
+        }
+        if (command === "approve") {
+          if (pending.phase !== "approved-output") return notify(ctx, sessionID, "No generated sleep output awaits approval.", "Sleep approval unavailable.");
+          if (pending.committing) return notify(ctx, sessionID, "Sleep commit is already in progress.", "Sleep commit pending.");
+          pending.committing = true;
+          try {
+            const sourceIds = [...new Set(pending.candidates.flatMap((item) => item.source_ids || item.sourceIds || (item.id ? [item.id] : [])))];
+            if (!sourceIds.length) {
+              pending.committing = false;
+              release(pending);
+              return notify(ctx, sessionID, "Sleep candidates have no source IDs; nothing was committed.", "Sleep commit rejected: missing source IDs.");
+            }
+            await callBackend(ctx, pending.project, "sleep_commit", { operation_id: pending.operationId ||= createHash("sha256").update(`${pending.bank}:${sessionID}:${fingerprint}:${sourceIds.join(",")}`).digest("hex"), source_ids: sourceIds, summary: pending.output });
+            release(pending);
+            return notify(ctx, sessionID, "Sleep summary stored in episodic memory.", "Sleep commit completed.");
+          } catch (error) { pending.committing = false; return notify(ctx, sessionID, `Sleep commit failed; approved output retained. Run /mnemosyne sleep approve to retry commit (generation will not repeat): ${error.message}\n${pending.output}`, "Sleep commit failed; output retained."); }
+        }
+      }
+
+      if (command === "invalidate" || command === "confirm") {
+        const project = getProject(ctx);
+        const pending = command === "confirm" ? pendingConfirmations.get(sessionID) : undefined;
+        if (command === "confirm") pendingConfirmations.delete(sessionID);
+        const snapshot = command === "confirm" ? pending?.snapshot : getSnapshot(sessionID);
+        const index = command === "confirm" ? pending?.index : (/^\d+$/.test(rest[0] || "") ? Number(rest[0]) : 0);
+        const target = command === "confirm" ? pending?.target : (index > 0 ? snapshot?.results?.[index - 1] : undefined);
+        if (!target || !target.id || ![project.bank, "opencode_global"].includes(target.bank) || (command === "confirm" && (!pending || getSnapshot(sessionID) !== snapshot || pending.fingerprint !== configFingerprint(project))) || (command === "invalidate" && snapshot.fingerprint !== configFingerprint(project))) return notify(ctx, sessionID, "Cannot invalidate: selection or project configuration is stale; no mutation was sent.", "Invalidation was not performed.");
+        if (target.bank === "opencode_global" && !project.globalBank) return notify(ctx, sessionID, "Global-bank access is disabled; invalidation was not performed.", "Invalidation was not performed.");
+        if (target.bank === "opencode_global" && command !== "confirm") {
+          pendingConfirmations.set(sessionID, { snapshot, target, index, fingerprint: configFingerprint(project) });
+          return notify(ctx, sessionID, `Confirm invalidation of global bank ${target.bank}:\n${target.content}\nRun /mnemosyne confirm.`, "Global memory invalidation requires confirmation.");
+        }
+        if (command === "confirm" && target.bank !== "opencode_global") return notify(ctx, sessionID, "No global invalidation is pending.", "Invalidation was not performed.");
+        if (target.bank !== "opencode_global") expireConfirmations(sessionID);
+        try {
+          const result = await callBackend(ctx, { ...project, bank: target.bank }, "invalidate", { memory_id: target.id });
+          return notify(ctx, sessionID, result === true ? `Invalidated ${target.bank} memory ${index}.` : `Invalidation was not confirmed (result: ${String(result)}).`, "Memory invalidation completed or was rejected.");
+        } catch (error) { return notify(ctx, sessionID, `Invalidation outcome unknown; do not retry automatically: ${error.message}`, "Memory invalidation outcome is unknown."); }
+      }
 
       if (!command || command === "help") {
         return notify(
@@ -554,8 +679,11 @@ export function createMnemosyneCommand(ctx, { transitionMode, backendCall: callB
           sessionID,
           [
             "/mnemosyne — show this help",
+            "/mnemosyne sleep — preview; then consent, approve, or reject",
             "/mnemosyne on|off — enable or disable automatic memory for this project",
             "/mnemosyne global on|off — route writes to shared or project bank",
+            "/mnemosyne invalidate <n> — invalidate an injected project memory; global memories require confirm",
+            "/mnemosyne confirm — confirm the pending global-memory invalidation",
             "/mnemosyne status — backend, enabled state, bank, storage, last error",
             "/mnemosyne stats — backend counters",
             "/mnemosyne file — Mnemosyne without embeddings",
@@ -596,6 +724,7 @@ export function createMnemosyneCommand(ctx, { transitionMode, backendCall: callB
         const persist = () => updateConfig(ctx, { writeMode: rest[0] === "on" ? "global" : "project" });
         if (!transitionMode) throw new Error("Mode transitions are unavailable outside plugin setup");
         const updated = await transitionMode(persist);
+        expireConfirmations();
         return notify(ctx, sessionID, `Write mode: ${updated.writeMode}`, `Mnemosyne writes now target ${updated.writeMode}.`);
       }
 
@@ -644,6 +773,7 @@ export function createMnemosyneCommand(ctx, { transitionMode, backendCall: callB
 
       if (command === "on" || command === "off") {
         const project = updateConfig(ctx, { enabled: command === "on" });
+        expireConfirmations();
         return notify(
           ctx,
           sessionID,
@@ -663,6 +793,7 @@ export function createMnemosyneCommand(ctx, { transitionMode, backendCall: callB
       const backendNames = Object.values(BACKENDS);
       if (backendNames.includes(backendAction)) {
         const project = updateConfig(ctx, { backend: backendAction, enabled: true });
+        expireConfirmations();
         return notify(
           ctx,
           sessionID,
@@ -673,6 +804,7 @@ export function createMnemosyneCommand(ctx, { transitionMode, backendCall: callB
 
       if (command === "backend" && backendNames.includes(rest[0])) {
         const project = updateConfig(ctx, { backend: rest[0] });
+        expireConfirmations();
         return notify(
           ctx,
           sessionID,
@@ -692,6 +824,9 @@ export default Plugin.define({
     const registrations = [];
     const ownSessions = new Set();
     const recallBySession = new Map();
+    const pendingConfirmations = new Map();
+    const pendingSleeps = new Map();
+    const sleepLocks = new Set();
     const turnCounts = new Map();
     const modeSnapshots = new Map();
     const continuationModes = new Map();
@@ -704,13 +839,16 @@ export default Plugin.define({
     });
 
     registrations.push(await ctx.command.transform((editor) => {
-      editor.add(createMnemosyneCommand(ctx, { transitionMode }));
+      editor.add(createMnemosyneCommand(ctx, { transitionMode, flushPendingTurns: (sessionID) => boundary.runPrompt(() => flush(sessionID)), pendingConfirmations, pendingSleeps, sleepLocks, getSnapshot: (id) => { const value = recallBySession.get(id); return value?.injected ? value : undefined; }, expireConfirmations: (id) => id ? pendingConfirmations.delete(id) : pendingConfirmations.clear() }));
     }));
 
     registrations.push(await ctx.session.hook("prompt", async (event) => {
       return boundary.runPrompt(async () => {
         ownSessions.add(event.sessionID);
         const project = getProject(ctx);
+        const fingerprint = configFingerprint(project);
+        pendingConfirmations.delete(event.sessionID);
+        recallBySession.delete(event.sessionID);
         const query = event.prompt?.text?.trim();
         if (!query) return;
         if (!project.enabled) { recallBySession.delete(event.sessionID); return; }
@@ -719,7 +857,7 @@ export default Plugin.define({
         modeSnapshots.set(event.sessionID, snapshots);
         try {
           const results = await recallMemories(ctx, project, event.prompt.text.trim());
-          recallBySession.set(event.sessionID, results);
+          recallBySession.set(event.sessionID, { generation: Symbol("recall"), results, fingerprint, injected: false });
         } catch (error) {
           recallBySession.delete(event.sessionID);
           console.error(`Mnemosyne recall failed: ${error.message}`);
@@ -728,10 +866,14 @@ export default Plugin.define({
     }));
 
     registrations.push(await ctx.session.hook("context", (event) => {
-      const results = recallBySession.get(event.sessionID) || [];
+      const snapshot = recallBySession.get(event.sessionID);
+      const results = snapshot?.results || [];
       if (!results.length) return;
       const block = memoryBlock(results);
-      if (block) event.system.push({ type: "text", text: block });
+      if (block) {
+        event.system.push({ type: "text", text: block });
+        snapshot.injected = true;
+      }
     }));
 
     const flush = async (sessionID) => {
@@ -778,6 +920,8 @@ export default Plugin.define({
 
     return async () => {
       events.abort();
+      pendingSleeps.clear();
+      sleepLocks.clear();
       if (currentWorker) currentWorker.child.kill("SIGTERM");
       const disposers = registrations.map((registration) => registration.dispose?.());
       await Promise.all(disposers);

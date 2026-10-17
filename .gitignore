@@ -10,3 +10,4 @@ coverage/
 
 # Dutch interview notes: private, never published
 interview/
+.decisions/activation.log

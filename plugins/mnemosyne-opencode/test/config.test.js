@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createMnemosyneCommand, getProject, writeProjectConfig } from "../index.js";
+import { configFingerprint, createMnemosyneCommand, getProject, writeProjectConfig } from "../index.js";
 
 // Phase 1 gate: configuration lives in opencode.jsonc, projects.json keeps
 // runtime state only. These tests cover the resolution order and, most
@@ -48,6 +48,27 @@ function cleanup(root) {
   delete process.env.XDG_CONFIG_HOME;
   delete process.env.MNEMOSYNE_BIN;
 }
+
+test("sleep.model resolves default, global and project override and participates in fingerprint", async (t) => {
+  const { ctx, root, projectDir, configHome } = fixture();
+  t.after(() => cleanup(root));
+  assert.equal(getProject(ctx).sleepModel, "inherit");
+  const initialFingerprint = configFingerprint(getProject(ctx));
+  writeFileSync(join(configHome, "opencode", "opencode.jsonc"), '{ "mnemosyne": { "sleep": { "model": "openai/gpt-4o" } } }');
+  assert.equal(getProject(ctx).sleepModel, "openai/gpt-4o");
+  assert.notEqual(configFingerprint(getProject(ctx)), initialFingerprint);
+  writeFileSync(join(projectDir, "opencode.jsonc"), '{ "mnemosyne": { "sleep": { "model": "anthropic/claude-3" } } }');
+  assert.equal(getProject(ctx).sleepModel, "anthropic/claude-3");
+});
+
+test("sleep.model rejects invalid values and shapes", async (t) => {
+  const { ctx, root, projectDir } = fixture();
+  t.after(() => cleanup(root));
+  for (const value of [null, 4, {}, "", "provider", "a/b/c", "a b/c"]) {
+    writeFileSync(join(projectDir, "opencode.jsonc"), JSON.stringify({ mnemosyne: { sleep: { model: value } } }));
+    assert.throws(() => getProject(ctx), /sleep\.model/);
+  }
+});
 
 test("on/off writes the project config file, not the state file", async (t) => {
   const { ctx, command, root, projectDir, replies } = fixture();

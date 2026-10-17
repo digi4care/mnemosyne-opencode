@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BACKENDS, createMnemosyneCommand, formatStats, getProject } from "../index.js";
+import { BACKENDS, configFingerprint, createMnemosyneCommand, formatStats, getProject } from "../index.js";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "memory-command-"));
@@ -198,4 +198,224 @@ test("the removed hindsight backend is an unknown action and changes nothing", a
   await command.execute({ sessionID: "ses-a", prompt: { text: "/mnemosyne hindsight", delivery: "queue" } });
   assert.match(replies.at(-1), /Unknown memory action/);
   assert.equal(getProject(ctx).backend, before);
+});
+
+test("invalidation routes only snapshot ID and bank, confirms global once, and never retries errors", async (t) => {
+  const { ctx, replies, root } = fixture();
+  t.after(() => cleanup(root));
+  const project = getProject(ctx);
+  let snapshot = { results: [{ id: "p-1", bank: project.bank, content: "project fact" }, { id: "g-1", bank: "opencode_global", content: "global fact" }], fingerprint: configFingerprint(project) };
+  const calls = [];
+  let outcome = true;
+  const command = createMnemosyneCommand(ctx, { getSnapshot: () => snapshot, backendCall: async (_ctx, p, op, payload) => { calls.push([p.bank, op, payload]); if (outcome instanceof Error) throw outcome; return outcome; } });
+  const run = (text) => command.execute({ sessionID: "ses-a", prompt: { text: `/mnemosyne ${text}` } });
+  await run("invalidate 1");
+  assert.deepEqual(calls[0], [project.bank, "invalidate", { memory_id: "p-1" }]);
+  outcome = false;
+  await run("invalidate 1");
+  assert.match(replies.at(-1), /not confirmed/);
+  outcome = new Error("timeout");
+  await run("invalidate 1");
+  assert.match(replies.at(-1), /outcome unknown/);
+  assert.equal(calls.length, 3);
+  outcome = true;
+  await run("invalidate 2");
+  assert.match(replies.at(-1), /global fact/);
+  await run("confirm");
+  assert.deepEqual(calls.at(-1), ["opencode_global", "invalidate", { memory_id: "g-1" }]);
+  await run("confirm");
+  assert.match(replies.at(-1), /stale/);
+  assert.equal(calls.length, 4);
+});
+
+test("invalidation fails closed for missing, stale, and disabled-global targets", async (t) => {
+  const { ctx, replies, root } = fixture();
+  t.after(() => cleanup(root));
+  const config = await import("node:fs/promises");
+  const project = getProject(ctx);
+  let snapshot = { results: [{ bank: project.bank, content: "no id" }], fingerprint: configFingerprint(project) };
+  let calls = 0;
+  const command = createMnemosyneCommand(ctx, { getSnapshot: () => snapshot, backendCall: async () => { calls++; return true; } });
+  const run = (text) => command.execute({ sessionID: "ses-a", prompt: { text: `/mnemosyne ${text}` } });
+  await run("invalidate 1");
+  assert.equal(calls, 0);
+  snapshot = { results: [{ id: "g", bank: "opencode_global", content: "shared" }], fingerprint: configFingerprint(project) };
+  await config.writeFile(join(project.directory, "opencode.jsonc"), '{"mnemosyne":{"globalBank":false}}');
+  await run("invalidate 1");
+  assert.equal(calls, 0);
+  assert.match(replies.at(-1), /stale/);
+});
+
+test("global confirmation is bound to snapshot and current project configuration", async (t) => {
+  const { ctx, replies, root } = fixture();
+  t.after(() => cleanup(root));
+  const project = getProject(ctx);
+  const original = { results: [{ id: "g", bank: "opencode_global", content: "shared fact" }], fingerprint: configFingerprint(project) };
+  let snapshot = original;
+  let calls = 0;
+  const command = createMnemosyneCommand(ctx, { getSnapshot: () => snapshot, backendCall: async () => { calls++; return true; } });
+  const run = (sessionID, action) => command.execute({ sessionID, prompt: { text: `/mnemosyne ${action}` } });
+  await run("same", "invalidate 1");
+  await run("same", "confirm");
+  assert.equal(calls, 1, "same session and snapshot confirms");
+
+  await run("new-snapshot", "invalidate 1");
+  snapshot = { results: [{ id: "g2", bank: "opencode_global", content: "new shared fact" }], fingerprint: configFingerprint(project) };
+  await run("new-snapshot", "confirm");
+  assert.equal(calls, 1);
+  assert.match(replies.at(-1), /stale/);
+
+  snapshot = original;
+  const config = await import("node:fs/promises");
+  for (const mutation of [
+    { enabled: true },
+    { backend: "mnemosyne-embedded" },
+    { recallLimit: 8 },
+    { writeMode: "global" },
+    { globalBank: false },
+  ]) {
+    await config.writeFile(join(project.directory, "opencode.jsonc"), '{"mnemosyne":{}}');
+    await run("changed", "invalidate 1");
+    await config.writeFile(join(project.directory, "opencode.jsonc"), JSON.stringify({ mnemosyne: mutation }));
+    await run("changed", "confirm");
+    assert.equal(calls, 1, `rejects config change ${JSON.stringify(mutation)}`);
+  }
+});
+
+test("confirm without pending state and project snapshots with changed backend or dataDir fail closed", async (t) => {
+  const { ctx, replies, root } = fixture();
+  t.after(() => cleanup(root));
+  const project = getProject(ctx);
+  let snapshot = { results: [{ id: "p", bank: project.bank, content: "project" }], fingerprint: configFingerprint(project) };
+  let calls = 0;
+  const command = createMnemosyneCommand(ctx, { getSnapshot: () => snapshot, backendCall: async () => { calls++; return true; } });
+  const run = (text) => command.execute({ sessionID: "session", prompt: { text: `/mnemosyne ${text}` } });
+  await run("confirm");
+  assert.equal(calls, 0);
+  for (const changes of [{ backend: "mnemosyne-embedded" }, { dataDir: join(root, "other-data") }]) {
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(join(project.directory, "opencode.jsonc"), JSON.stringify({ mnemosyne: changes }));
+    await run("invalidate 1");
+    assert.equal(calls, 0);
+    await fs.writeFile(join(project.directory, "opencode.jsonc"), '{"mnemosyne":{}}');
+  }
+  assert.match(replies.at(-1), /stale/);
+});
+
+function sleepHarness(t, { v2 = true, model = { providerID: "openai", id: "gpt-test" }, preview = [{ id: "source-a", content: "candidate" }], flushPendingTurns } = {}) {
+  const base = fixture();
+  t.after(() => cleanup(base.root));
+  const generated = [], backend = [];
+  if (v2) {
+    base.ctx.session.get = async ({ sessionID }) => { assert.equal(sessionID, "sleep-session"); return model ? { model } : {}; };
+    base.ctx.generate = { text: async (request) => { generated.push(request); return { text: "approved summary" }; } };
+  }
+  const command = createMnemosyneCommand(base.ctx, { flushPendingTurns, backendCall: async (_ctx, project, operation, payload) => {
+    backend.push({ bank: project.bank, operation, payload });
+    if (operation === "sleep_preview") return preview;
+    if (operation === "sleep_commit" && backend.filter((x) => x.operation === operation).length === 1) throw new Error("temporary");
+    return {};
+  } });
+  const run = (action) => command.execute({ sessionID: "sleep-session", prompt: { text: `/mnemosyne sleep${action ? ` ${action}` : ""}` } });
+  return { ...base, command, generated, backend, run };
+}
+
+test("sleep requires explicit consent, discloses preview, approves output before commit and retries without generation", async (t) => {
+  const h = sleepHarness(t);
+  await h.run("");
+  assert.equal(h.generated.length, 0);
+  assert.match(h.replies.at(-1), /openai\/gpt-test/);
+  assert.match(h.replies.at(-1), /bank: opencode_/);
+  assert.match(h.replies.at(-1), /source-a/);
+  const previewedPrompt = h.replies.at(-1).split("Exact provider prompt:\n")[1].split("\n\nRun /mnemosyne sleep consent")[0];
+  assert.equal(h.backend.filter((x) => x.operation === "sleep_commit").length, 0);
+  await h.run("consent");
+  assert.deepEqual(h.generated[0].model, { providerID: "openai", id: "gpt-test" });
+  assert.equal(h.generated[0].prompt, previewedPrompt);
+  assert.match(h.replies.at(-1), /approved summary/);
+  assert.equal(h.backend.filter((x) => x.operation === "sleep_commit").length, 0);
+  await h.run("approve");
+  assert.equal(h.backend.at(-1).bank, getProject(h.ctx).bank);
+  assert.equal(h.backend.at(-1).payload.summary, "approved summary");
+  assert.deepEqual(h.backend.at(-1).payload.source_ids, ["source-a"]);
+  assert.match(h.replies.at(-1), /output retained/);
+  await h.run("approve");
+  assert.equal(h.generated.length, 1);
+  assert.equal(h.backend.filter((x) => x.operation === "sleep_commit").length, 2);
+  assert.match(h.replies.at(-1), /stored/);
+});
+
+test("sleep V1 unsupported, missing model, rejection and cancellation do not generate or write", async (t) => {
+  const v1 = sleepHarness(t, { v2: false });
+  await v1.run("");
+  assert.match(v1.replies.at(-1), /unsupported/);
+  const missing = sleepHarness(t, { model: null });
+  await missing.run("");
+  assert.match(missing.replies.at(-1), /no usable V2/);
+  const rejected = sleepHarness(t);
+  await rejected.run("");
+  await rejected.run("consent");
+  await rejected.run("reject");
+  assert.equal(rejected.backend.filter((x) => x.operation === "sleep_commit").length, 0);
+  const cancelled = sleepHarness(t);
+  await cancelled.run("");
+  await cancelled.run("cancel");
+  assert.equal(cancelled.generated.length, 0);
+  assert.equal(cancelled.backend.filter((x) => x.operation === "sleep_commit").length, 0);
+});
+
+test("sleep rejects stale configuration and locks a bank while another sleep is pending", async (t) => {
+  const h = sleepHarness(t);
+  await h.run("");
+  await h.run("");
+  assert.match(h.replies.at(-1), /already pending/);
+  const project = getProject(h.ctx);
+  const fs = await import("node:fs/promises");
+  await fs.writeFile(join(project.directory, "opencode.jsonc"), JSON.stringify({ mnemosyne: { sleep: { model: "other/model" } } }));
+  await h.run("consent");
+  assert.match(h.replies.at(-1), /configuration changed/);
+  assert.equal(h.generated.length, 0);
+  assert.equal(h.backend.filter((x) => x.operation === "sleep_commit").length, 0);
+});
+
+test("sleep flush failure aborts before provider call and releases the bank lock", async (t) => {
+  let fail = true;
+  const order = [];
+  const h = sleepHarness(t, { flushPendingTurns: async () => { order.push("flush"); if (fail) throw new Error("flush failed"); } });
+  const generate = h.ctx.generate.text;
+  h.ctx.generate.text = async (...args) => { order.push("generate"); return generate(...args); };
+  await h.run("");
+  assert.deepEqual(order, []);
+  await h.run("consent");
+  assert.deepEqual(order, ["flush"]);
+  assert.match(h.replies.at(-1), /generation failed: flush failed/);
+  assert.equal(h.generated.length, 0);
+  assert.equal(h.backend.filter((x) => x.operation === "sleep_commit").length, 0);
+  fail = false;
+  await h.run("");
+  assert.match(h.replies.at(-1), /Run \/mnemosyne sleep consent/);
+});
+
+test("sleep routes preview and commit to the effective write bank", async (t) => {
+  const h = sleepHarness(t);
+  const fs = await import("node:fs/promises");
+  await fs.writeFile(join(getProject(h.ctx).directory, "opencode.jsonc"), JSON.stringify({ mnemosyne: { writeMode: "global", globalBank: true } }));
+  await h.run("");
+  assert.equal(h.backend.at(-1).bank, "opencode_global");
+  assert.match(h.replies.at(-1), /bank: opencode_global/);
+  await h.run("consent");
+  await h.run("approve");
+  assert.equal(h.backend.at(-1).operation, "sleep_commit");
+  assert.equal(h.backend.at(-1).bank, "opencode_global");
+});
+
+test("sleep uses the configured provider/model override instead of the session model", async (t) => {
+  const h = sleepHarness(t, { model: { providerID: "session-provider", id: "session-model" } });
+  const project = getProject(h.ctx);
+  const fs = await import("node:fs/promises");
+  await fs.writeFile(join(project.directory, "opencode.jsonc"), JSON.stringify({ mnemosyne: { sleep: { model: "configured-provider/configured-model" } } }));
+  await h.run("");
+  assert.match(h.replies.at(-1), /configured-provider\/configured-model/);
+  await h.run("consent");
+  assert.deepEqual(h.generated[0].model, { providerID: "configured-provider", id: "configured-model" });
 });

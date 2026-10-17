@@ -1,6 +1,6 @@
 # PRD — Memory lifecycle and configuration of the Mnemosyne OpenCode plugin
 
-Status: **all design questions answered; implementation ready** · Version 1.2 · 16 October 2026 · Author: Chris Engelhard
+Status: **staged V2 sleep complete; V1 server/TUI adapter in progress** · Version 2.1 · 17 October 2026 · Author: Chris Engelhard
 
 Every open design question has been answered (§8). Two earlier recommendations of mine were withdrawn after research (§11.2, §12.2). This document was translated from Dutch on 16 October 2026; the Dutch original is preserved in the private archive repository `digi4care/mnemosyne-opencode-research-history`.
 
@@ -82,7 +82,10 @@ Extra pain: configuration and runtime state live in the same file. A corrupt `pr
   "backend": "mnemosyne-file",
   "recallLimit": 4,
   "enabled": false,
-  "globalBank": true
+  "globalBank": true,
+  "sleep": {
+    "model": "inherit"
+  }
 }
 ```
 With a hard separation: `opencode.jsonc` is what the user wants; `projects.json` is what happened. On startup the plugin takes **configuration** from `opencode.jsonc` and takes only `enabled`, `lastError` and `updatedAt` from `projects.json`. If an `opencode.jsonc` has a `mnemosyne` block, that wins; otherwise the current state is the fallback.
@@ -215,7 +218,7 @@ My answer to "is this the right vendor": the difference is not the database, it 
 | 1 | Separate config (`opencode.jsonc`) from state (`projects.json`) | — | 1 day |
 | 2 | Shared global bank plus mode switch | 1 | 0.5 day |
 | 3 | `/mnemosyne stats` per tier | — | 2 h |
-| 4 | `/mnemosyne sleep` as an **explicit** command, no auto-trigger | 3 | 2 h |
+| 4 | `/mnemosyne sleep` as an **explicit** command, with preview/approval and configurable model selection | 3 | TBD |
 | 5 | Correction path: invalidate a contradicted injected memory | 3 | 1 day |
 | 6 | Per-type decay (D3) | 5 | 3 days |
 | 7 | Automatic contradiction detection | 6, plus the LLM decision | deferred |
@@ -248,6 +251,8 @@ That document describes only what is **shipped**. Planned features are not prese
 | D6 | Corrections or decay first? | **Corrections first** | decided 16-10-2026 |
 | D7 | How is something routed to the global bank? | **A mode switch**, not per-message marking and not automatic detection | decided 16-10-2026 |
 | D8 | Language of this document | **Translate in place**; the Dutch original stays in the private archive | decided 16-10-2026 |
+| D9 | Which model does sleep use? | Dedicated `mnemosyne.sleep.model` setting in `opencode.jsonc`; default `inherit`, optionally one explicit `provider/model`; no plugin fallback list | decided 17-10-2026 |
+| D10 | How is approved sleep output stored? | Plugin-owned atomic SQLite write to episodic memory, preserving source turns and using an operation ID for retry safety | decided 17-10-2026 |
 
 ### Consequences of the decisions
 
@@ -256,6 +261,8 @@ That document describes only what is **shipped**. Planned features are not prese
 - **D3** stores the coefficient in `metadata`, which costs four extra point reads per prompt because `recall` drops metadata.
 - **D4 + D7** mean recall touches two banks, and the project bank always wins.
 - **D6** means decay is preventive instead of corrective, and that the expensive part of contradiction detection is narrowed to four candidates per prompt rather than postponed entirely.
+- **D9** means sleep model selection is configurable without changing the rest of OpenCode's model defaults. `inherit` must resolve to the invoking session's selected model; verify that the supported plugin/API exposes it before implementation.
+- **D10** means the worker is coupled to the pinned Mnemosyne SQLite schema. It atomically inserts the approved episodic summary, records its source IDs, and marks source rows consolidated. It does not run native conflict handling, model-refresh proposals, or degradation.
 
 ---
 
@@ -274,7 +281,7 @@ That document describes only what is **shipped**. Planned features are not prese
 - [x] Implementation order approved, with the correction inserted before decay
 - [x] Document translated to English
 - [ ] Implementation of §7 completed, each item verified separately
-- [ ] `docs/working-with-memory.md` updated for every behaviour change from D1–D7
+- [x] `docs/working-with-memory.md` updated for every shipped behaviour change from D1–D7, including manual invalidation, bounded recency boost, and deferred automatic contradiction detection/consolidation
 
 ---
 
@@ -336,3 +343,53 @@ Six issues found on 16 October 2026. All six are resolved; they are recorded her
 **B5 — no gate per item.** The order had estimates but no exit criteria. Now each item names its dependency; the verification per item is an acceptance criterion in §10.
 
 **B6 — the independence claim was too strong.** Items 1, 2 and 3 were described as independent, but item 1 adds `globalBank`, item 2 uses it, and item 3 displays its result. The order 1 → 2 → 3 is real.
+
+---
+
+## 13. Sleep model selection, 17 October 2026
+
+The owner changed the earlier direction of always inheriting the currently active model. Sleep gets a dedicated setting inside the existing `mnemosyne` object in `opencode.jsonc`:
+
+```jsonc
+{
+  "mnemosyne": {
+    "sleep": {
+      "model": "inherit"
+    }
+  }
+}
+```
+
+- Default: `"inherit"`, meaning use the model selected for the current OpenCode session.
+- Override: a single OpenCode model reference, using the documented `provider/model` form, for example `"sleep": { "model": "provider/model-id" }`.
+- There is no plugin-configured fallback list. A configured sleep model is the one selected for the sleep generation; fallback behavior is not added by this PRD.
+- This setting belongs in the plugin's existing `mnemosyne` config object, alongside `backend`, `recallLimit`, and `globalBank`. `"inherit"` is a plugin-level setting, not a claim that OpenCode's native config schema defines that literal value.
+- The plugin must retain its existing features on OpenCode V1 and V2 through version-specific entrypoints/adapters. V1 uses a separate server plugin plus TUI companion registration (`server` and `tui` package subpaths); TUI command results appear in the local UI, not in the chat transcript. The V1 server and TUI modules coordinate through shared SQLite requests/snapshots; the server polls requests and alone performs transitions inside its prompt/flush boundary. The TUI does not assume shared process memory or private plugin RPC and does not write mode config itself. Turn writes must be deduplicated atomically with the Mnemosyne write using stable V1 message IDs; a SQLite coordination lease alone does not prove exactly-once flushing. If stable IDs or atomic deduplication are unavailable, or the server cannot enumerate/confirm the relevant sessions idle, the affected cross-process operation must fail closed and its weaker guarantee must be disclosed. V1 `session.list` is project-scoped and defaults to 100 results; enumerate with explicit pagination and recheck `session.status` before flush/commit. Its generated SDK types expose fewer query fields than the route schema, so use only verified route fields and validate request construction against V1.18.35. Safe model-backed sleep is supported on V2 only: V1's inspected public plugin APIs do not provide an equivalent transient generation path, so `/mnemosyne sleep` must report that it is unsupported on V1. Do not fall back to V1's normal session prompt, which would persist output in chat history before review.
+- The plugin must resolve `inherit` to the model that the invoking OpenCode UI would use for its next request and pass the resolved model explicitly to the OpenCode-managed generation route. A session's configured default or persisted model is not sufficient evidence that it matches an ephemeral TUI selection. In V1, `command.execute.before` does not expose the model, but the supported `chat.message` hook receives an optional resolved `model`/`variant` before the model loop; verify that the sleep flow can use this hook safely. In either version, if the selected model cannot be resolved, stop with a clear error rather than silently using the global default or another model.
+- An explicit model override must be validated and reported if unavailable or invalid. Do not silently switch to another configured model. OpenCode's own provider availability behavior is separate and must not be represented as a plugin fallback chain.
+- Model selection does not grant provider-data consent. Each run still previews and asks before external transmission; generated output still requires approval before storage. Sleep remains manual and never automatic.
+- Provider consent is a separate explicit command after preview. Only after consent may sleep flush the invoking session's pending turns; a flush error releases the sleep lock and aborts before generation. Declining/cancelling at preview performs no flush, provider call, or sleep write.
+- After output approval, the worker writes the episodic summary, its exact source working-memory IDs, and source consolidation markers in one transaction. The write carries a unique operation ID so a retry cannot duplicate the summary. Original working-memory rows remain stored and recallable.
+- Sleep uses the effective write destination for the invoking project (project bank or `opencode_global`) and holds a per-bank busy lock; it never combines source rows across banks.
+- This staged path does not call `Mnemosyne.sleep()` and does not run its conflict invalidation, model-refresh, or episodic degradation behavior; it only stores the approved summary and source linkage.
+
+### Acceptance criteria
+
+1. With `mnemosyne.sleep.model` absent or set to `"inherit"`, sleep uses the model currently selected in the invoking OpenCode session.
+2. With `mnemosyne.sleep.model` set to one `provider/model` reference, sleep uses that model regardless of the session's selected model.
+3. The setting is read from the same global/project `opencode.jsonc` `mnemosyne` configuration layers as the other plugin settings; project-level configuration follows the existing precedence rules.
+4. An invalid/unavailable explicit model produces a visible error and does not silently pick a different plugin-configured model.
+5. No fallback-model array or fallback-model setting is introduced.
+6. In both `inherit` and override modes, provider preview/confirmation and output approval remain required; refusal does not invoke the model or write the consolidation output.
+7. Separate compatibility tests prove existing plugin features remain available through supported V1 server/TUI entrypoints and V2. V1 manual commands run via the TUI companion and report through local UI; automatic recall/context/flush run via the server plugin. Shared SQLite state binds TUI invalidation to the server's exact injected snapshot and sends mode-switch requests to the server poller; the server performs flush and config mutation. Tests exercise crash/restart interleavings; do not claim exactly-once writes unless stable V1 message IDs are atomically deduplicated with the Mnemosyne write. Mode switch fails closed if the server cannot establish a complete session inventory and idle boundary. V2 sleep tests cover `inherit` resolving the current session model and an explicit override sent through OpenCode's transient generation API. On V1, `/mnemosyne sleep` visibly reports that this feature is unsupported and does not call a model or write memory.
+8. If `inherit` is selected but the actual UI-selected model cannot be established, sleep stops visibly before model generation and tells the user to set `mnemosyne.sleep.model` to one `provider/model` value or explicitly select/pass a model in the chat; it does not silently use OpenCode's global default or another model.
+9. Output rejection writes nothing. After approval, episodic insertion, source linkage, and source markers commit atomically; retrying the same operation ID does not create a duplicate summary.
+10. Original source working-memory turns remain stored and recallable; native conflict detection, model refresh, and degradation are not triggered by this staged path.
+11. The transaction is tested against the pinned Mnemosyne schema, including failure before commit and recovery/retry after a committed operation.
+12. Preview refusal performs no flush. After consent, a pending-turn flush failure aborts before generation and releases the per-bank sleep lock.
+
+### Verification status
+
+OpenCode V2 documents model references in `provider/model` form and model selection at session/agent/config level. Its documented “newest available supported model” behavior concerns an unavailable configured default; the docs do not establish an ordered user-configured fallback list or automatic failover after a generation request fails. V2 runtime test: OpenCode `2.0.30`, read-only `GET /api/session/{sessionID}` returned `Session.Info.model` (`providerID`, `id`, `variant`) for the current session without a prompt or generation. V1 runtime test: isolated OpenCode `1.18.35`, read-only `GET /session/{id}` for a synthetic new session returned no model. V1.18.35 source further shows the built-in command path proceeds into `prompt(...)` after `command.execute.before`; this hook cannot safely reject before generation, and V1's normal prompt API stores generated messages in the session. The owner chose to keep V1 loadable but report sleep unsupported rather than persist unreviewed output in chat history. V2 uses `ctx.generate.text` for transient generation. If no V2 model is available at runtime, show the user how to set `mnemosyne.sleep.model` or select a model in the session, and stop before generation. Do not silently substitute OpenCode's global default.
+
+Owner-selected storage contract: use a plugin-owned atomic SQLite transaction against the pinned Mnemosyne schema. The built-in `sleep()` cannot provide the required review-before-write boundary, and `consolidate_to_episodic()` commits independently without idempotent operation IDs. Verify the transaction and its upgrade coupling against `mnemosyne-memory==3.15.1`; no real memory data or provider was used in these tests.
