@@ -149,7 +149,7 @@ Message lists reaching the requested cap are treated as incomplete and are not f
 
 ## Installation
 
-**From npm** (planned for corrected package version `0.3.0`; not published yet):
+**From npm** (recommended):
 
 ```jsonc
 "plugins": [ "@digi4care/mnemosyne-opencode" ]

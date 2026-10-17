@@ -18,12 +18,13 @@ User-visible changes to the Mnemosyne OpenCode plugin.
   blocking V1 settings changes.
 - Updated setup instructions and tests for both OpenCode plugin interfaces.
 
-> Version 0.2.1 is published. Its npm package-name install currently fails on OpenCode
-> V2 because the resolver selects the V1 `./server` export. Use the local-checkout
-> installation instructions until a corrective release is available.
+## [0.3.0] - 2026-10-17
 
-## [0.3.0] - Unreleased
-
-- Fix OpenCode V2 package-name loading by reserving `./server` for the V2 plugin and
-  exposing the V1 server adapter as `./v1-server`. Existing V1 registrations using
+- Fixed OpenCode V2 package-name loading by reserving `./server` for the V2 plugin.
+- Moved the V1 server adapter to `./v1-server`. Existing V1 registrations using
   `/server` must migrate to `/v1-server`.
+
+## [0.3.1] - 2026-10-17
+
+- Corrected the plugin README to reflect that npm installation is available and to
+  document the V1 path migration.
