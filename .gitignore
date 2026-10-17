@@ -11,3 +11,7 @@ coverage/
 # Dutch interview notes: private, never published
 interview/
 .decisions/activation.log
+
+# Internal development and release notes; keep local, do not publish
+docs/PRD-memory-lifecycle.md
+docs/RELEASE-READINESS.md

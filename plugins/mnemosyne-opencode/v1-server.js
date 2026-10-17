@@ -55,7 +55,9 @@ export function createV1Server({ client, project, directory, workerCall, now = D
     if (!projectInfo.enabled) return;
     if (!(await sessionIdle(sessionID))) throw new Error("session status is not confirmed idle");
     const published = await coord("coord_get_snapshot", { project: projectKey, session: sessionID });
-    if (!published) return false;
+    // Historical/pre-plugin sessions have no coordination record and therefore
+    // have no Mnemosyne-managed turns to drain.
+    if (!published) return null;
     if (published.claimed) return false;
     const actual = await getActualMessages(sessionID);
     const verified = verifySnapshot(published, actual, sessionID, configFingerprint(getProject(ctx)));
@@ -130,7 +132,7 @@ export function createV1Server({ client, project, directory, workerCall, now = D
       projectInfo = getProject(ctx);
       if (mode === "global" && !projectInfo.globalBank) throw new Error("global bank is disabled; write mode was not changed");
       const sessions = await inventoryIdle();
-      for (const session of sessions) if (!(await flush(session.id))) throw new Error(`session ${session.id} has no verified snapshot; mode switch cancelled`);
+      for (const session of sessions) if ((await flush(session.id)) === false) throw new Error(`session ${session.id} has no verified snapshot; mode switch cancelled`);
       writeProjectConfig(projectInfo.directory, { writeMode: mode });
       pendingConfirmations.clear();
     });
@@ -139,7 +141,7 @@ export function createV1Server({ client, project, directory, workerCall, now = D
   async function drainBeforeConfigChange() {
     return withTransition(async () => {
       const sessions = await inventoryIdle();
-      for (const session of sessions) if (!(await flush(session.id))) throw new Error(`session ${session.id} has no verified snapshot; configuration change cancelled`);
+      for (const session of sessions) if ((await flush(session.id)) === false) throw new Error(`session ${session.id} has no verified snapshot; configuration change cancelled`);
     });
   }
 

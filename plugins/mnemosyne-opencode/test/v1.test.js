@@ -5,6 +5,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createV1Server } from "../v1-server.js";
 import V1TuiModule, { createV1Tui } from "../v1-tui.js";
+import { readFile } from "node:fs/promises";
+
+test("package exports keep the resolver server path on V2 and expose V1 explicitly", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(packageJson.version, "0.3.0");
+  assert.equal(packageJson.exports["./server"], "./index.js");
+  assert.equal(packageJson.exports["./v1-server"], "./v1-server.js");
+  assert.equal(packageJson.exports["./tui"], "./v1-tui.js");
+  const v2 = await import(packageJson.exports["./server"].replace("./", "../"));
+  const v1 = await import("../v1-server.js");
+  assert.equal(typeof v2.default, "object");
+  assert.equal(typeof v2.default.id, "string");
+  assert.equal(typeof v2.default.setup, "function");
+  assert.equal(typeof v1.createV1Server, "function");
+  assert.notEqual(v2.default, v1.createV1Server);
+});
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "mnemo-v1-"));
@@ -166,6 +182,23 @@ test("V1 global mode transition fails closed on incomplete inventory", async t =
   assert.equal(writes,0);await server.dispose();
 });
 
+test("V1 mode and config drains ignore historical sessions without snapshots", async t => {
+  const {projectDir}=fixture(t);const {writeProjectConfig,getProject}=await import("../index.js");writeProjectConfig(projectDir,{enabled:true,globalBank:true});
+  const client={session:{list:async()=>({data:[{id:"legacy-session"}]}),status:async()=>({})}};
+  const server=createV1Server({client,directory:projectDir,project:{directory:projectDir,canonical:projectDir},pollMs:100000,workerCall:async(_p,op)=>op==="coord_get_snapshot"?null:{}});
+  await server.transition("global");
+  assert.equal(getProject({location:{directory:projectDir,project:{canonical:projectDir}}}).writeMode,"global");
+  await server.dispose();
+});
+
+test("V1 published invalid snapshot still blocks mode and config drains", async t => {
+  const {projectDir}=fixture(t);const {writeProjectConfig}=await import("../index.js");writeProjectConfig(projectDir,{enabled:true,globalBank:true});
+  const client={session:{list:async()=>({data:[{id:"managed-session"}]}),status:async()=>({}),messages:async()=>[]}};
+  const server=createV1Server({client,directory:projectDir,project:{directory:projectDir,canonical:projectDir},pollMs:100000,workerCall:async(_p,op)=>op==="coord_get_snapshot"?{generation:1,fingerprint:"stale",claimed:false,payload:{messageID:"missing",text:"x",configFingerprint:"wrong"}}:{}});
+  await assert.rejects(server.transition("global"),/no verified snapshot/);
+  await server.dispose();
+});
+
 function requestHarness(t, projectDir, { snapshot, sessions = [], messages = [], cli = false } = {}) {
   const calls=[];let nextRequest,finished;
   if(cli)process.env.MNEMOSYNE_BIN="/bin/echo";
@@ -204,6 +237,15 @@ test("V1 stats, backup, verify, and import command paths use worker/CLI only on 
   const missing=await h.dispatch("import",["hindsight"]);assert.match(missing.result.message,/needs a file path/);
   const extra=await h.dispatch("verify",["--full","--unsafe"]);assert.equal(extra.status,"failed");
   const imported=await h.dispatch("import",["hindsight","./source.json"]);assert.match(imported.result.message,/import-hindsight/);assert.match(imported.result.message,/source.json/);
+});
+
+test("V1 backend selection drains legacy sessions without snapshots", async t => {
+  const {projectDir}=fixture(t);const {writeProjectConfig,getProject}=await import("../index.js");
+  writeProjectConfig(projectDir,{enabled:true});
+  const h=requestHarness(t,projectDir,{sessions:[{id:"legacy-session"}]});
+  const result=await h.dispatch("file");
+  assert.equal(result.status,"complete");
+  assert.equal(getProject({location:{directory:projectDir,project:{canonical:projectDir}}}).backend,"mnemosyne-file");
 });
 
 test("V1 backend selection writes project config after safe drain; invalidation fails closed and confirms global", async t => {

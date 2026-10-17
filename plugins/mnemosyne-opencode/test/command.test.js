@@ -364,6 +364,33 @@ test("sleep V1 unsupported, missing model, rejection and cancellation do not gen
   assert.equal(cancelled.backend.filter((x) => x.operation === "sleep_commit").length, 0);
 });
 
+test("sleep cancellation during an in-flight commit does not claim nothing was stored", async (t) => {
+  const base = fixture();
+  t.after(() => cleanup(base.root));
+  let resolveCommit;
+  const commit = new Promise((resolve) => { resolveCommit = resolve; });
+  const backend = [];
+  base.ctx.session.get = async () => ({ model: { providerID: "openai", id: "gpt-test" } });
+  base.ctx.generate = { text: async () => ({ text: "approved summary" }) };
+  const command = createMnemosyneCommand(base.ctx, { backendCall: async (_ctx, project, operation, payload) => {
+    backend.push({ operation, payload, bank: project.bank });
+    if (operation === "sleep_preview") return [{ id: "source-a", content: "candidate" }];
+    if (operation === "sleep_commit") return commit;
+  } });
+  const run = (action) => command.execute({ sessionID: "sleep-session", prompt: { text: `/mnemosyne sleep${action ? ` ${action}` : ""}` } });
+  await run("");
+  await run("consent");
+  const approving = run("approve");
+  while (!backend.some((item) => item.operation === "sleep_commit")) await new Promise((resolve) => setImmediate(resolve));
+  await run("reject");
+  assert.doesNotMatch(base.replies.at(-1), /no memory was written|cancelled/i);
+  assert.match(base.replies.at(-1), /in progress/i);
+  resolveCommit({});
+  await approving;
+  assert.match(base.replies.at(-1), /stored/);
+  assert.equal(backend.filter((item) => item.operation === "sleep_commit").length, 1);
+});
+
 test("sleep rejects stale configuration and locks a bank while another sleep is pending", async (t) => {
   const h = sleepHarness(t);
   await h.run("");

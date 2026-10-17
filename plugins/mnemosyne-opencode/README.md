@@ -1,9 +1,11 @@
 # Mnemosyne OpenCode plugin
 
-Automatic project and shared memory for OpenCode. Backed by Mnemosyne. Once enabled
-in a project, the plugin recalls project memories first and can supplement them from
-the shared bank; new user/assistant turns go to the configured write destination. No model-driven
-remember/recall required.
+Automatic project and shared memory for OpenCode, backed by Mnemosyne. Turn it on
+once, then keep coding: it saves chat turns and looks for useful past notes when you
+start a prompt. You do not need to ask the AI to remember or search for anything.
+
+New to AI memory? Start with the [plain-language guide](https://github.com/digi4care/mnemosyne-opencode/blob/main/docs/working-with-memory.md).
+This README is the detailed setup and command reference.
 
 **Backends**
 - `mnemosyne-file` — SQLite + FTS, no embeddings (offline, recommended default).
@@ -85,8 +87,11 @@ Sleep is manual and requires two confirmations: `/mnemosyne sleep` displays the
 provider, model, bank, and exact prompt; `/mnemosyne sleep consent` allows generation;
 then review the generated summary and run `/mnemosyne sleep approve` to store it or
 `/mnemosyne sleep reject` to discard it. A failed storage attempt can be retried with
-`approve` without another model call. V2 uses transient OpenCode generation; on V1,
-sleep reports unsupported rather than storing unreviewed output in chat history.
+`approve` without another model call. Sleep is available in V2 only: V1 does not
+provide the same built-in safe way to generate a draft outside the chat. A separate
+V1-specific path could be built, but is not included here. The normal V1 chat route
+would put the draft in the conversation before review, so it is not used. Regular V1
+memory features still work; only sleep is unavailable.
 Sleep stores an episodic summary and source linkage atomically; it preserves raw turns
 but does not run Mnemosyne's native conflict detection, refresh proposals, or
 degradation logic. It targets the current effective write bank (project or shared),
@@ -104,7 +109,7 @@ provides `/mnemosyne` commands and local notifications. Register both modules:
 
 ```jsonc
 // V1 server plugin configuration
-"plugin": ["@digi4care/mnemosyne-opencode/server"]
+"plugin": ["@digi4care/mnemosyne-opencode/v1-server"]
 ```
 
 ```jsonc
@@ -112,7 +117,7 @@ provides `/mnemosyne` commands and local notifications. Register both modules:
 { "plugin": ["@digi4care/mnemosyne-opencode/tui"] }
 ```
 
-The package subpaths `./server` and `./tui` are explicit exports. TUI command output
+The package subpaths `./v1-server` and `./tui` are explicit V1 exports. TUI command output
 is local to the terminal, not inserted into chat. Open a session before using the
 commands. V1 exposes discrete TUI commands: `/mnemosyne-help`, `/mnemosyne-on`,
 `/mnemosyne-off`, `/mnemosyne-status`, `/mnemosyne-global-on`,
@@ -128,12 +133,10 @@ unsupported and performs no writes or provider calls. V1 server and TUI processe
 If project session inventory or idle status cannot be confirmed completely, V1
 refuses a global/project mode switch.
 
-V1.18.35 does not document an ordering guarantee between `chat.message` and
-`experimental.chat.system.transform`. Recall is injected only when the transform
-hook observes a previously published recall for that session; if that hook runs
-first or is not called for a prompt, no memory block is injected. This adapter does
-not claim prompt-time recall injection in those cases. Message lists reaching the
-requested cap are treated as incomplete and are not flushed.
+The V1 adapter was smoke-tested with OpenCode V1.18.35: a local fake-provider
+request contained recalled memory in its system prompt before the user's question.
+This verifies that tested version and path only; other V1 versions are not covered.
+Message lists reaching the requested cap are treated as incomplete and are not flushed.
 
 ## Prerequisites
 
@@ -146,16 +149,21 @@ requested cap are treated as incomplete and are not flushed.
 
 ## Installation
 
-**From npm** (recommended once published):
+**From npm** (planned for corrected package version `0.3.0`; not published yet):
 
 ```jsonc
 "plugins": [ "@digi4care/mnemosyne-opencode" ]
 ```
 
-OpenCode installs npm plugins with Bun at startup and caches them in
-`~/.cache/opencode/node_modules/`. **Not yet verified:** whether a version pin such as
-`"@digi4care/mnemosyne-opencode@0.2.0"` is accepted. Do not promise pinning until it is
-tested.
+OpenCode installs npm plugins with Bun at startup. The root package name remains the V2
+entrypoint; `./server` also maps to the V2 entrypoint because OpenCode 2.0.30's
+package-name resolver selects that subpath. V1.18.35 users must register
+`@digi4care/mnemosyne-opencode/v1-server` and the TUI subpath as shown above.
+
+**Migration from 0.2.x:** if your V1 server config used
+`@digi4care/mnemosyne-opencode/server`, change it to
+`@digi4care/mnemosyne-opencode/v1-server` before upgrading. In 0.3.0, `/server` is
+reserved for V2 resolver compatibility and no longer loads the V1 adapter.
 
 **From a local checkout:**
 
@@ -173,7 +181,7 @@ then pick a project directory.
 ```text
 # Once per project
 /mnemosyne
-/mnemosyne mnemosyne file
+/mnemosyne file
 /mnemosyne on
 
 # Then just work. Everything is automatic:

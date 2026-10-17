@@ -1,6 +1,6 @@
 {
   "name": "@digi4care/mnemosyne-opencode",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Automatic, per-project long-term memory for OpenCode, backed by Mnemosyne",
   "keywords": [
     "opencode",
@@ -24,7 +24,8 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./server": "./v1-server.js",
+    "./server": "./index.js",
+    "./v1-server": "./v1-server.js",
     "./tui": "./v1-tui.js"
   },
   "engines": {
@@ -39,15 +40,13 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test"
-  },
-  "devDependencies": {
-    "@opencode/plugin": "^2.0.26"
+    "test": "node --test --test-concurrency=1"
   },
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
+    "@opencode/plugin": "^2.0.26",
     "jsonc-parser": "^3.3.1"
   }
 }

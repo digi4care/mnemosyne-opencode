@@ -588,6 +588,7 @@ export function createMnemosyneCommand(ctx, { transitionMode, flushPendingTurns,
         const release = (pending) => { if (pending) { pendingSleeps.delete(sessionID); sleepLocks.delete(pending.bank); } };
         const pending = pendingSleeps.get(sessionID);
         if (command === "reject" || command === "cancel") {
+          if (pending?.committing) return notify(ctx, sessionID, "Sleep commit is already in progress; cancellation cannot stop the storage operation.", "Sleep commit already in progress.");
           release(pending);
           return notify(ctx, sessionID, pending ? "Sleep cancelled; no memory was written." : "No sleep is pending.", "Sleep cancelled.");
         }
