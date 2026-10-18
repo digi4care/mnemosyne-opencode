@@ -29,6 +29,9 @@ This README is the detailed setup and command reference.
 | `/mnemosyne verify` | database integrity check |
 | `/mnemosyne import hindsight <src>` | import legacy Hindsight data |
 
+Selecting the embedded backend and running `/mnemosyne status` probes the configured
+embedding endpoint with fixed test text only; no stored or user-provided text is sent.
+
 Retrieval retains Mnemosyne's relevance ranking and applies a fixed, bounded
 recency boost independently in each bank (up to 5%, 30-day half-life). It never
 filters memories by age or changes stored validity fields. Memories without a

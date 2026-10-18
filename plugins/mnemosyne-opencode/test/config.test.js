@@ -38,7 +38,7 @@ function fixture(withGlobalConfig) {
       },
     },
   };
-  return { ctx, command: createMnemosyneCommand(ctx), replies, calls, root, projectDir, configHome };
+  return { ctx, command: createMnemosyneCommand(ctx, { embeddingProbe: async () => ({ available: true }) }), replies, calls, root, projectDir, configHome };
 }
 
 function cleanup(root) {

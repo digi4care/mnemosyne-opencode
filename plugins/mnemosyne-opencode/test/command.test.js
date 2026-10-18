@@ -67,7 +67,8 @@ test("on/off and backend selection persist independently", async (t) => {
   assert.equal(getProject(ctx).enabled, true);
   assert.equal(getProject(ctx).backend, BACKENDS.file);
 
-  await command.execute({ sessionID: "ses-a", prompt: { text: "/mnemosyne embedded", delivery: "queue" } });
+  const injected = createMnemosyneCommand(ctx, { embeddingProbe: async () => ({ available: true }) });
+  await injected.execute({ sessionID: "ses-a", prompt: { text: "/mnemosyne embedded", delivery: "queue" } });
   assert.equal(getProject(ctx).backend, BACKENDS.embedded);
   assert.equal(getProject(ctx).enabled, true);
 
@@ -79,6 +80,40 @@ test("on/off and backend selection persist independently", async (t) => {
   assert.equal(getProject(ctx).enabled, false);
   assert.equal(getProject(ctx).backend, BACKENDS.file);
   assert.equal(replies.length, 4);
+});
+
+test("embedded selection probes; failure warns but preserves backend and configuration", async (t) => {
+  const { ctx, replies, root } = fixture(); t.after(() => cleanup(root));
+  const calls = [];
+  const command = createMnemosyneCommand(ctx, { embeddingProbe: async (project) => { calls.push(project.backend); throw new Error("model unavailable"); } });
+  await command.execute({ sessionID: "s", prompt: { text: "/mnemosyne embedded" } });
+  assert.deepEqual(calls, [BACKENDS.embedded]);
+  assert.equal(getProject(ctx).backend, BACKENDS.embedded);
+  assert.equal(getProject(ctx).enabled, true);
+  assert.match(replies.at(-1), /WARNING: embedding service unavailable: model unavailable/);
+});
+
+test("embedded selection reports successful probe", async (t) => {
+  const { ctx, replies, root } = fixture(); t.after(() => cleanup(root));
+  const command = createMnemosyneCommand(ctx, { embeddingProbe: async () => ({ available: true }) });
+  await command.execute({ sessionID: "s", prompt: { text: "/mnemosyne embedded" } });
+  assert.match(replies.at(-1), /Embedding service: available/);
+});
+
+test("status probes afresh only for embedded backend", async (t) => {
+  const { ctx, replies, root } = fixture(); t.after(() => cleanup(root));
+  let outcome = true; let probes = 0;
+  const command = createMnemosyneCommand(ctx, { embeddingProbe: async () => { probes++; if (!outcome) throw new Error("offline"); return { available: true }; } });
+  await command.execute({ sessionID: "s", prompt: { text: "/mnemosyne embedded" } });
+  await command.execute({ sessionID: "s", prompt: { text: "/mnemosyne status" } });
+  assert.match(replies.at(-1), /embedding_service: available/);
+  outcome = false;
+  await command.execute({ sessionID: "s", prompt: { text: "/mnemosyne status" } });
+  assert.match(replies.at(-1), /embedding_service: unavailable — offline/);
+  assert.equal(probes, 3);
+  await command.execute({ sessionID: "s", prompt: { text: "/mnemosyne file" } });
+  await command.execute({ sessionID: "s", prompt: { text: "/mnemosyne status" } });
+  assert.equal(probes, 3, "file status does not probe");
 });
 
 test("status reports backend and last error without a model call", async (t) => {

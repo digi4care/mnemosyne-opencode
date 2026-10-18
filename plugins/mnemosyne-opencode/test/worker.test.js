@@ -216,3 +216,9 @@ test("pinned temporal scoring boosts recent rows, leaves invalid timestamps unch
     assert.equal(result.rows_unchanged, true);
   }
 });
+
+test("embedding probe uses only its fixed non-user input", () => {
+  const source = readFileSync(new URL("../memory_worker.py", import.meta.url), "utf8");
+  assert.match(source, /EMBEDDING_PROBE_TEXT = "Mnemosyne embedding connectivity test\."/);
+  assert.match(source, /_embeddings\.embed\(\[EMBEDDING_PROBE_TEXT\]\)/);
+});

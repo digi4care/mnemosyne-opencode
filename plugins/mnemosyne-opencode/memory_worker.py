@@ -14,6 +14,7 @@ from mnemosyne.core.beam import WORKING_MEMORY_TTL_HOURS, SLEEP_BATCH_SIZE
 
 TEMPORAL_WEIGHT = 0.05
 TEMPORAL_HALFLIFE_HOURS = 720
+EMBEDDING_PROBE_TEXT = "Mnemosyne embedding connectivity test."
 
 
 def _coord_path() -> str:
@@ -246,6 +247,18 @@ def main() -> None:
 
             if operation == "ping":
                 result = {"status": "ok", "bank": bank}
+            elif operation == "embedding_probe":
+                from mnemosyne.core import embeddings as _embeddings
+                vector = _embeddings.embed([EMBEDDING_PROBE_TEXT])
+                if vector is None or len(vector) == 0 or vector[0] is None or len(vector[0]) == 0:
+                    raise RuntimeError("embedding model returned no usable embedding")
+                try:
+                    values = [float(value) for value in vector[0]]
+                except (TypeError, ValueError, OverflowError):
+                    raise RuntimeError("embedding model returned an invalid embedding")
+                if not all(__import__("math").isfinite(value) for value in values):
+                    raise RuntimeError("embedding model returned an invalid embedding")
+                result = {"available": True}
             elif operation and operation.startswith("coord_"):
                 result = coordination(operation, request)
             elif operation == "remember_turn":

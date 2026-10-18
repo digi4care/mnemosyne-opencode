@@ -2,6 +2,12 @@
 
 User-visible changes to the Mnemosyne OpenCode plugin.
 
+## [0.3.2] - 2026-10-18
+
+- Added embedded-service health checks when selecting the embedded backend and
+  running `/mnemosyne status`. The check sends only fixed test text to the configured
+  endpoint and preserves the selected backend when the check fails.
+
 ## [0.2.1] - 2026-10-17
 
 - Added optional, manual memory summaries on OpenCode V2. You can preview what will be

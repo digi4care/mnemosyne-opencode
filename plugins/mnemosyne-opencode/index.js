@@ -573,7 +573,7 @@ export function configFingerprint(project) {
   });
 }
 
-export function createMnemosyneCommand(ctx, { transitionMode, flushPendingTurns, backendCall: callBackend = backendCall, getSnapshot = () => undefined, pendingConfirmations = new Map(), expireConfirmations = () => {}, pendingSleeps = new Map(), sleepLocks = new Set() } = {}) {
+export function createMnemosyneCommand(ctx, { transitionMode, flushPendingTurns, backendCall: callBackend = backendCall, embeddingProbe = (project) => workerCall(project, "embedding_probe"), getSnapshot = () => undefined, pendingConfirmations = new Map(), expireConfirmations = () => {}, pendingSleeps = new Map(), sleepLocks = new Set() } = {}) {
   return {
     name: "mnemosyne",
     description: "Toggle and configure automatic project memory",
@@ -699,6 +699,15 @@ export function createMnemosyneCommand(ctx, { transitionMode, flushPendingTurns,
 
       if (command === "status") {
         const project = getProject(ctx);
+        let embeddingStatus = "";
+        if (project.backend === BACKENDS.embedded) {
+          try {
+            await embeddingProbe(project);
+            embeddingStatus = "\nembedding_service: available (fixed test text sent to configured endpoint)";
+          } catch (error) {
+            embeddingStatus = `\nembedding_service: unavailable — ${error.message}`;
+          }
+        }
         const error = project.lastError ? `\nlast_error: ${project.lastError}` : "";
         return notify(
           ctx,
@@ -714,7 +723,7 @@ export function createMnemosyneCommand(ctx, { transitionMode, flushPendingTurns,
             `project: ${project.directory}`,
             `data: ${project.dataDir}`,
             `config: ${describeConfigSources(project)}`,
-          ].join("\n") + error,
+          ].join("\n") + embeddingStatus + error,
           `Project memory status printed in chat: enabled=${project.enabled}, backend=${project.backend}.`,
         );
       }
@@ -795,6 +804,14 @@ export function createMnemosyneCommand(ctx, { transitionMode, flushPendingTurns,
       if (backendNames.includes(backendAction)) {
         const project = updateConfig(ctx, { backend: backendAction, enabled: true });
         expireConfirmations();
+        if (backendAction === BACKENDS.embedded) {
+          try {
+            await embeddingProbe(project);
+            return notify(ctx, sessionID, `Mnemosyne enabled for ${project.name} with backend ${project.backend}\nEmbedding service: available (fixed test text sent to configured endpoint)`, `Project memory backend switched to ${project.backend} and enabled; embedding service is available.`);
+          } catch (error) {
+            return notify(ctx, sessionID, `Mnemosyne enabled for ${project.name} with backend ${project.backend}\nWARNING: embedding service unavailable: ${error.message}\nThe embedded backend remains selected.`, `Project memory remains configured for ${project.backend}, but the embedding service is unavailable.`);
+          }
+        }
         return notify(
           ctx,
           sessionID,
