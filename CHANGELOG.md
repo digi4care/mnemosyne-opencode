@@ -2,6 +2,11 @@
 
 User-visible changes to the Mnemosyne OpenCode plugin.
 
+## [0.3.3] - 2026-10-21
+
+- Updated npm dependencies to current releases within their declared semver ranges.
+- Updated `@opencode/plugin` to `2.0.29`.
+
 ## [0.3.2] - 2026-10-18
 
 - Added embedded-service health checks when selecting the embedded backend and
