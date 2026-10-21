@@ -2,6 +2,11 @@
 
 User-visible changes to the Mnemosyne OpenCode plugin.
 
+## [0.4.0] - 2026-10-21
+
+- Require Node.js 22.19.0 or newer to match the Undici 8 runtime dependency.
+- Add GitHub contributor attribution for Chris Engelhard (`@digi4care`).
+
 ## [0.3.3] - 2026-10-21
 
 - Updated npm dependencies to current releases within their declared semver ranges.

@@ -9,7 +9,8 @@ import { readFile } from "node:fs/promises";
 
 test("package exports keep the resolver server path on V2 and expose V1 explicitly", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.match(packageJson.version, /^0\.3\.\d+$/);
+  assert.match(packageJson.version, /^\d+\.\d+\.\d+$/);
+  assert.equal(packageJson.engines.node, ">=22.19.0");
   assert.equal(packageJson.exports["./server"], "./index.js");
   assert.equal(packageJson.exports["./v1-server"], "./v1-server.js");
   assert.equal(packageJson.exports["./tui"], "./v1-tui.js");

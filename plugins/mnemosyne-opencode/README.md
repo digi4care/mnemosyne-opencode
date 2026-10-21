@@ -148,7 +148,7 @@ Message lists reaching the requested cap are treated as incomplete and are not f
 - `mnemosyne-memory==3.15.1` available via PyPI.
 - Optional: Ollama on `localhost:11434` with `nomic-embed-text` for the
   `embedded` backend.
-- Node 20+.
+- Node.js 22.19.0+ (required by the Undici 8 dependency in `@opencode/plugin`).
 
 ## Installation
 
