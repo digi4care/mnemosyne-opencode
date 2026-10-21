@@ -23,6 +23,7 @@ export MNEMOSYNE_PACKAGE="${MNEMOSYNE_PACKAGE:-mnemosyne-memory[mcp]==3.15.1}"
 
 mkdir -p "$MNEMOSYNE_DATA_DIR"
 
-# Local Ollama needs no credential. More importantly, Mnemosyne deliberately
-# refuses to send an Authorization header over plain HTTP.
+# Smoke tests use local Ollama, which needs no credential. Unset keys so the
+# smoke run can never send a token anywhere; the plugin itself only forwards
+# MNEMOSYNE_EMBEDDING_API_KEY to HTTPS or loopback embedding URLs.
 unset OPENAI_API_KEY OPENROUTER_API_KEY MNEMOSYNE_EMBEDDING_API_KEY

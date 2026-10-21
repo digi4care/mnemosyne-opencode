@@ -258,6 +258,32 @@ export function renderMessages(messages) {
   return turns;
 }
 
+// Embedding auth: upstream mnemosyne-memory sends MNEMOSYNE_EMBEDDING_API_KEY as a
+// Bearer token to MNEMOSYNE_EMBEDDING_API_URL with no scheme check. Forward the key
+// only to HTTPS endpoints or loopback hosts so it never crosses the network in
+// plain text. OPENAI_API_KEY/OPENROUTER_API_KEY are always stripped: upstream falls
+// back to them, which would leak an unrelated key to the embedding endpoint.
+export function embeddingAuthAllowed(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "https:") return true;
+    if (parsed.protocol !== "http:") return false;
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function sanitizeEmbeddingEnv(env) {
+  delete env.OPENAI_API_KEY;
+  delete env.OPENROUTER_API_KEY;
+  const url = env.MNEMOSYNE_EMBEDDING_API_URL || "http://localhost:11434/v1";
+  if (env.MNEMOSYNE_EMBEDDING_API_KEY && !embeddingAuthAllowed(url)) {
+    delete env.MNEMOSYNE_EMBEDDING_API_KEY;
+  }
+  return env;
+}
+
 function startWorker(project) {
   const env = {
     ...process.env,
@@ -273,7 +299,7 @@ function startWorker(project) {
   };
   if (project.backend === BACKENDS.file) env.MNEMOSYNE_NO_EMBEDDINGS = "1";
   else delete env.MNEMOSYNE_NO_EMBEDDINGS;
-  for (const key of ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "MNEMOSYNE_EMBEDDING_API_KEY"]) delete env[key];
+  sanitizeEmbeddingEnv(env);
   mkdirSync(project.dataDir, { recursive: true });
 
   const child = spawn("uvx", ["--from", MNEMOSYNE_PACKAGE, "--with", "numpy", "python", WORKER_PATH], {
@@ -498,6 +524,7 @@ function runCli(project, args) {
   };
   if (project.backend === BACKENDS.file) env.MNEMOSYNE_NO_EMBEDDINGS = "1";
   else delete env.MNEMOSYNE_NO_EMBEDDINGS;
+  sanitizeEmbeddingEnv(env);
   if (process.env.MNEMOSYNE_BIN) {
     env.MNEMOSYNE_BIN = process.env.MNEMOSYNE_BIN;
   }

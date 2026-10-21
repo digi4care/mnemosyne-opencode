@@ -202,7 +202,8 @@ Check state with `/mnemosyne status`. Disable or quiet background failures with
 | `MNEMOSYNE_STATE_FILE` | `~/.local/share/opencode/storage/plugin/mnemosyne-opencode/projects.json` | per-project runtime state (`last_error`, `updated_at`) |
 | `MNEMOSYNE_DATA_DIR` | `~/.local/share/opencode/storage/plugin/mnemosyne-opencode/data/banks/opencode_<hash>` | bank DB directory |
 | `MNEMOSYNE_NO_EMBEDDINGS` | (1 when file) | disables embeddings without changing bank |
-| `MNEMOSYNE_EMBEDDING_API_URL` | `http://localhost:11434/v1` | Ollama base URL (embedded only) |
+| `MNEMOSYNE_EMBEDDING_API_URL` | `http://localhost:11434/v1` | OpenAI-compatible embedding base URL (embedded only) |
+| `MNEMOSYNE_EMBEDDING_API_KEY` | (unset) | Bearer token for the embedding endpoint; forwarded only to HTTPS or loopback (`localhost`/`127.0.0.1`/`::1`) URLs, never to plain-HTTP LAN hosts. `OPENAI_API_KEY`/`OPENROUTER_API_KEY` are always stripped from the worker so they cannot leak to the embedding endpoint. |
 | `MNEMOSYNE_EMBEDDING_MODEL` | `nomic-embed-text` | embedding model name |
 | `MNEMOSYNE_EMBEDDING_DIM` | `768` | dimension |
 | `MNEMOSYNE_MCP_BANK` | auto | bank name override |
@@ -211,6 +212,7 @@ Check state with `/mnemosyne status`. Disable or quiet background failures with
 
 ## Troubleshooting
 
+- Custom CA or corporate proxy for a remote embedding endpoint: `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` are honored, but `SSL_CERT_FILE` also affects `uv` itself; if dependency resolution fails with certificate errors, use `uv --native-tls` or pre-warm the uv cache.
 - No recall: `/mnemosyne status`; check `last_error` in output.
 - Embedded backend impotent: ensure Ollama has `nomic-embed-text` pulled.
 - Backup output empty: check dir permissions (defaults to storage root).

@@ -2,6 +2,14 @@
 
 User-visible changes to the Mnemosyne OpenCode plugin.
 
+## [0.5.0] - 2026-10-21
+
+- Support authenticated embedding endpoints: `MNEMOSYNE_EMBEDDING_API_KEY` is now
+  forwarded to the worker as a Bearer token for HTTPS or loopback embedding URLs,
+  and dropped for plain-HTTP remote hosts. `OPENAI_API_KEY`/`OPENROUTER_API_KEY`
+  are always stripped from the worker and CLI environment so they cannot leak to
+  the embedding endpoint.
+
 ## [0.4.0] - 2026-10-21
 
 - Require Node.js 22.19.0 or newer to match the Undici 8 runtime dependency.
